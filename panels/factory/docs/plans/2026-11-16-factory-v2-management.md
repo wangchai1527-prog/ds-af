@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 内置 http/fs/child_process（无新依赖）；前端单文件 HTML（plan.html / factory.html / workbench.html）。
 
-**Spec:** 2026-11-16 四轮拍板冻结：①dsh-analysis 决策点表 1–5 全按推荐（预研升级为独立分析台；Subagent-driven 执行；research 联网）；②分析会话设计四点全按推荐：独立于工厂（可并行/挂起）/ 人 reply 才跑一轮（pull 式）/ go 后产物下传跳过重复预研 / discovery 三节点撤掉改衔接；③入口定位：workbench 新增「Idea Plan 工作入口」卡，Quant 卡退 v2.x；④**工厂必须支持并发**——单流水线排队设计效率太低（实证：旧 run blocked 堵死全厂 + 新需求 409），废除全局单例。分析会话状态机：开放 →（轮次循环）→ 待拍板 → go | no-go | park；park/no-go 可复活续轮。
+**Spec:** 2026-11-16 四轮拍板冻结：①dsh-analysis 决策点表 1–5 全按推荐（预研升级为独立分析台；Subagent-driven 执行；research 联网）；②分析会话设计四点全按推荐：独立于工厂（可并行/挂起）/ 人 reply 才跑一轮（pull 式）/ go 后产物下传跳过重复预研 / discovery 三节点撤掉改衔接；③入口定位：workbench 新增「Idea Plan 工作入口」卡，Quant 卡退 v2.x；④**工厂必须支持并发**——单流水线排队设计效率太低（实证：旧 run blocked 堵死全厂 + 新需求 409），废除全局单例；⑤并发必须有**前端可视化看板**（泳道式多 run 管理界面，人能一眼看全部在跑任务并逐个操作）。分析会话状态机：开放 →（轮次循环）→ 待拍板 → go | no-go | park；park/no-go 可复活续轮。
 
 ## Global Constraints
 
@@ -75,7 +75,7 @@
 
 **Files:**
 - Modify: `panels/factory/factory-server.js`（activeRuns Map + 全 API 按 runId 寻址 + MAX_CONCURRENT + bootState 全量恢复 + projects 写串行化）
-- Modify: `panels/factory/factory.html`（多任务列表 + 切换视图）
+- Modify: `panels/factory/factory.html`（多 run 并发可视化看板）
 - Test: `panels/factory/test/concurrent.test.mjs`
 
 **Interfaces:**
@@ -84,7 +84,11 @@
 - Produces: API 寻址规则：`/api/state` 无参 → `{runs:[全部 active 摘要], run:最近活动 run 完整态}`（向后兼容 workbench）；`/api/state?id=<runId>` → 指定 run 完整态。`/api/retry {id}`、`/api/approve {id, ...}`、`/preview/<runId>/<rel>` 同步按 id 寻址（旧 `/preview/<rel>` 回退最近活动 run）。
 - Produces: bootState 全量恢复：扫描 runs/ 下所有 nodes.json 非全 done 的 run 载入为 **paused** 态（不自动续跑、不算 executing 额度）；含 blocked/awaiting 的照常恢复各自状态。
 - Produces: projects.json 写串行化：进程内 Promise 链互斥（`saveProjects`/`attachRun`/`newProject` 统一走队列），防并发 delivery 丢更新。
-- Produces: factory.html：顶栏任务列表（executing/paused/blocked/awaiting 徽标）+ 点击切换当前查看的 run；事件流与节点链按选中 run 渲染。
+- Produces: factory.html **多 run 并发可视化看板**（纯原生 DOM，零依赖，30s 内自刷新）：
+  - ①顶栏并发池总览：并发占用 `n/MAX_CONCURRENT` 徽标 + 各态计数（executing 🟢 / paused ⏸ / blocked ⛔ / awaiting 👤 / done ✅）；
+  - ②每 run 一条**流水线泳道**：节点链横排芯片（done ✅ / running ⏳ / blocked ⛔ / pending ○ / awaiting 🔒），泳道头显示 idea 摘要与运行时长，点击泳道切换下方详情；
+  - ③详情区（按选中 run）：实时事件流（node_start/node_check/pipeline_blocked/pipeline_awaiting）、产物树与预览入口（/preview）、操作按钮——重试 / verify-only 重试 / approve go·redo（awaiting 时）/ 删除（非 executing）；
+  - ④数据源：轮询 `/api/state` 聚合视图 + `/api/runs` 历史列表合并展示（active 置顶）。
 - Consumes: 现有 persist()/nodes.json（每 run 独立目录天然隔离，无需改）。
 - 语义变更记录：`/api/mission` 的 409 从「factory busy」变为「并发已满」；单 run 内仍是串行节点流水线（本 Task 不做节点级并行）。
 
