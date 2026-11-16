@@ -3,3 +3,4 @@ archive/
 samples/lab/
 node_modules/
 *.log
+logs/
