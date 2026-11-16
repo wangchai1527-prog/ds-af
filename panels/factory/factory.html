@@ -232,25 +232,44 @@ const FLOWN={build:'🟢 立项开发',fix:'🔧 运维修复',iterate:'🔁 迭
 const STN={delivered:'✅ 已交付',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
 async function loadRuns(){
   try{
-    const d=await(await fetch('/api/runs')).json();
-    $('runlist').innerHTML=d.runs.map(r=>`
-      <div style="border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;background:#fff">
+    const d=await(await fetch('/api/projects')).json();
+    const runsWithoutProj=(await(await fetch('/api/runs')).json()).runs.filter(r=>!(d.projects||[]).some(p=>p.runs&&p.runs.includes(r.id)));
+    $('runlist').innerHTML=
+    (d.projects||[]).map(p=>`
+      <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <b style="font-family:var(--mono);font-size:12px">${r.id}</b>
-          <span style="font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)">${FLOWN[r.flow]||r.flow}</span>
-          <span style="font-size:11px;color:${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
-          ${d.active===r.id?'<span style="font-size:11px;color:var(--primary)">● 当前</span>':''}
+          <b>🗂 ${p.id}</b><span style="font-size:13px">${p.name}</span>
+          <span style="font-size:11px;color:var(--muted)">📊 ${p.runs.length} 个任务</span>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin:4px 0 8px">${(r.idea||'').slice(0,60)}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="mbtn" onclick="viewRun('${r.id}')">📂 查看</button>
-          ${r.status==='delivered'?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁 迭代…</button>
-          <button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="rbRun('${r.id}')">↩️ 回滚上一版</button>`:''}
-          <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑 删除</button>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+        ${(p.runs||[]).map(r=>`
+          <div style="display:flex;align-items:center;gap:8px;border-left:3px solid ${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--border)'};padding:4px 10px;background:#fafafa;border-radius:6px;flex-wrap:wrap">
+            <span style="font-family:var(--mono);font-size:11.5px">${r.id}</span>
+            <span style="font-size:11px;color:var(--muted)">${FLOWN[r.flow]||r.flow}</span>
+            <span style="font-size:11px;color:${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
+            <span style="font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(r.idea||'').slice(0,40)}</span>
+            ${r.flow==='build'&&r.status==='delivered'?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁迭代</button>
+            <button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="rbRun('${r.id}')">↩️回滚</button>`:''}
+            <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑删任务</button>
+          </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">（无任务记录）</div>'}
         </div>
-      </div>`).join('')||'<div style="color:var(--muted);font-size:13px">暂无项目</div>';
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="viewRun('${(p.runs||[])[0]||''}')">📂 查看</button>
+          <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delProj('${p.id}',${p.runs.length})">🗑 删除整个项目（${p.runs.length} 任务+产品代码全部清零）</button>
+        </div>
+      </div>`).join('')
+    +runsWithoutProj.map(r=>`
+      <div style="border:1px dashed var(--border);border-radius:10px;padding:8px 14px;margin-bottom:8px">
+        <span style="font-family:var(--mono);font-size:12px">${r.id}</span> <span style="font-size:11px;color:var(--muted)">${FLOWN[r.flow]} · 孤儿任务（未挂项目）</span>
+        <button class="mbtn" style="border-color:var(--err);color:var(--err);float:right" onclick="delRun('${r.id}')">🗑删任务</button>
+      </div>`).join('');
   }catch(e){$('runlist').innerHTML='<div style="color:var(--err);font-size:12px">加载失败</div>'}
 }
+window.delProj=async(id,n)=>{
+  if(!confirm('删除项目 '+id+'：将删除 '+n+' 个任务与产品代码，当前视图一并清零，不可恢复。确认？'))return;
+  const r=await(await fetch('/api/projects/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  toast(r.ok?'🗑 项目已整树删除（'+r.deletedRuns+' 任务）':'❌ '+r.error);loadRuns();
+};
 window.viewRun=id=>{ // 查看：切到当前任务视图并恢复该项目状态
   showTab('run');addEv('查看','stage','📂 载入项目 '+id+'（只读视图，进度来自其 nodes.json）','stage-ev');
   fetch('/api/state').then(r=>r.json()).then(()=>{toast('已切回当前任务视图；历史项目详情见其 runs 目录')});

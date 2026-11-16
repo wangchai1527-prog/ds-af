@@ -1,7 +1,18 @@
 // Engineering Factory v2 · 节点管理制 —— 每个节点有进入条件/负责人/交付物/验收判据
 // 验收不过 → 节点 blocked → 流水线停止 → 人工重试，防偏移
 const http=require('http'),{spawn,execSync}=require('child_process'),fs=require('fs'),path=require('path');
-const PORT=8794, RUNDIR='/root/.dsh/DS-AF/runs';
+const PORT=process.env.PORT||8794, RUNDIR=process.env.RUNDIR||'/root/.dsh/DS-AF/runs';
+const PROJFILE=path.join(path.dirname(RUNDIR),'projects.json');
+function loadProjects(){ // 损坏→重建空索引，不崩溃
+  try{const p=JSON.parse(fs.readFileSync(PROJFILE,'utf8'));if(Array.isArray(p))return p}catch(e){}
+  try{fs.writeFileSync(PROJFILE,'[]')}catch(e){}
+  return [];
+}
+function saveProjects(p){fs.writeFileSync(PROJFILE,JSON.stringify(p,null,1))}
+function newProject(name,repo){const p=loadProjects();const proj={id:'P-'+String(p.length+1).padStart(3,'0'),name,repo,created:new Date().toISOString(),runs:[]};p.push(proj);saveProjects(p);return proj}
+function attachRun(projId,runId,name,repo){const p=loadProjects();let pr=p.find(x=>x.id===projId);
+  if(!pr){pr={id:projId,name:name||runId,repo:repo||null,created:new Date().toISOString(),runs:[]};p.push(pr)}
+  if(!pr.runs.includes(runId))pr.runs.push(runId);saveProjects(p);return pr}
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:'+process.env.PATH};
 let run=null;
 
@@ -194,6 +205,14 @@ function runFrom(idx,res){
       run.artifacts=listArtifacts(run.dir);persist();
       emit({type:'node_check',node:n.id,pass:a.pass,detail:a.detail,deliverable:n.deliverable});
       if(!a.pass){run.executing=false;emit({type:'pipeline_blocked',node:n.id,text:`⛔ 节点「${n.name}」验收未过，流水线已停止 — 修正后可重试本节点`});if(res)res.end();return}
+      if(a.pass){ // 交付完成 → 登记项目
+        try{
+          if(run.flow==='build'){const pr=newProject(run.idea.slice(0,24),run.dir);attachRun(pr.id,path.basename(run.dir),run.idea.slice(0,24),run.dir);run.projectId=pr.id}
+          else if(run.flow==='iterate'&&run.parentProject){attachRun(run.parentProject,path.basename(run.dir))}
+          else if(run.flow==='fix'){const pr=newProject('fix:'+run.idea.slice(0,16),run.repo||run.dir);attachRun(pr.id,path.basename(run.dir))}
+          emit({type:'project',text:'🗂 已登记项目索引'});
+        }catch(e){}
+      }
       idx++;setTimeout(step,600);
     }
   };
@@ -218,6 +237,20 @@ http.createServer((req,res)=>{
     const name=new URL(req.url,'http://x').searchParams.get('name');
     if(!run)return j(res,400,{});
     try{return j(res,200,{content:fs.readFileSync(path.join(run.dir,name),'utf8').slice(0,8000)})}catch(e){return j(res,404,{})}
+  }
+  // ===== 项目树 =====
+  if(req.method==='GET'&&req.url==='/api/projects'){
+    const projs=loadProjects();
+    const out=projs.map(pr=>({...pr,
+      runs:(pr.runs||[]).map(id=>{
+        const p=path.join(RUNDIR,id);
+        let meta={idea:'',flow:'build',nodeStatus:[]};
+        try{meta=JSON.parse(rf(p,'nodes.json')||'{}')}catch(e){}
+        const blocked=(meta.nodeStatus||[]).includes('blocked');
+        const done=(meta.nodeStatus||[]).length&&meta.nodeStatus[meta.nodeStatus.length-1]==='done'&&!blocked;
+        return{id,idea:meta.idea||'',flow:meta.flow||'build',status:blocked?'blocked':(done?'delivered':'paused'),exists:fs.existsSync(p)};
+      })}));
+    return j(res,200,{projects:out});
   }
   // ===== 项目 CRUD =====
   if(req.method==='GET'&&req.url==='/api/runs'){
@@ -264,6 +297,23 @@ http.createServer((req,res)=>{
     });
     return;
   }
+  if(req.method==='POST'&&req.url==='/api/projects/delete'){
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const id=JSON.parse(b||'{}').id||'';
+      const projs=loadProjects();const pr=projs.find(x=>x.id===id);
+      if(!pr)return j(res,404,{error:'no project'});
+      for(const rid of pr.runs||[]){
+        const p=path.join(RUNDIR,rid);
+        if(run&&run.dir===p&&run.executing)return j(res,409,{error:'项目含正在执行的任务'});
+        if(p.startsWith(RUNDIR))fs.rmSync(p,{recursive:true,force:true});
+        if(run&&run.dir===p)run=null;
+      }
+      if(pr.repo&&pr.repo.startsWith(RUNDIR))fs.rmSync(pr.repo,{recursive:true,force:true});
+      saveProjects(projs.filter(x=>x.id!==id));
+      return j(res,200,{ok:true,deletedRuns:(pr.runs||[]).length});
+    });
+    return;
+  }
   if(req.method==='POST'&&req.url==='/api/runs/iterate'){
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
       const {id='',idea=''}=JSON.parse(b||'{}');
@@ -274,7 +324,9 @@ http.createServer((req,res)=>{
       if(!idea.trim())return j(res,400,{error:'empty idea'});
       const dir=path.join(RUNDIR,'run-'+Date.now());
       scaffold(dir,'iterate',idea,repo);
-      run={dir,idea,flow:'iterate',repo,stage:null,nodeStatus:ITERNODES.map(_=>'pending'),acceptDetails:[],events:[],artifacts:[],done:false};
+      let parentProject=null;
+      try{const projs=loadProjects();parentProject=(projs.find(x=>x.runs&&x.runs.includes(id))||{}).id||null}catch(e){}
+      run={dir,idea,flow:'iterate',repo,parentProject,stage:null,nodeStatus:ITERNODES.map(_=>'pending'),acceptDetails:[],events:[],artifacts:[],done:false};
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
       run.events.push({type:'flow',flow:'iterate',text:'🔁 迭代开发流（基于 '+id+' 的产品，仓库: '+repo+'）'});
       W(res,run.events[run.events.length-1]);
