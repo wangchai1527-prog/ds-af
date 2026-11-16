@@ -8,8 +8,8 @@ const d=process.cwd();
 const W=(f,c)=>{fs.mkdirSync(path.dirname(path.join(d,f)),{recursive:true});fs.writeFileSync(path.join(d,f),c)};
 const pad=(s,n)=>s.repeat(Math.ceil(n/s.length)).slice(0,n);
 await new Promise(r=>setTimeout(r,250));
-if(prompt.includes('Product Agent')){if(prompt.includes('必阻塞'))W('llmwiki/block-marker','1');W('llmwiki/PRD.md','# PRD\n## 产品定位\n'+pad('并发工厂测试产品需求文档：本产品面向工程团队的并发流水线管理场景，提供看板、泳道、节点验收与产物目录浏览能力。',260)+'\n## 功能清单\n- P0 并发看板\n## 验收标准\n- 全绿\n');}
-else if(prompt.includes('Prototype Agent'))W('runtime/prototype.html','<!DOCTYPE html><html><body><button onclick="alert(1)">x</button><script>'+pad('/*mock*/',2000)+'</script></body></html>');
+if(prompt.includes('Product Agent')){W('llmwiki/prompt-product.txt',prompt);if(prompt.includes('必阻塞'))W('llmwiki/block-marker','1');W('llmwiki/PRD.md','# PRD\n## 产品定位\n'+pad('并发工厂测试产品需求文档：本产品面向工程团队的并发流水线管理场景，提供看板、泳道、节点验收与产物目录浏览能力。',260)+'\n## 功能清单\n- P0 并发看板\n## 验收标准\n- 全绿\n');}
+else if(prompt.includes('Prototype Agent')){W('llmwiki/prompt-prototype.txt',prompt);W('runtime/prototype.html','<!DOCTYPE html><html><body><button onclick="alert(1)">x</button><script>'+pad('/*mock*/',2000)+'</script></body></html>');}
 else if(prompt.includes('Architect Agent'))W('llmwiki/TechSpec.md','# TechSpec\n## 文件结构\n- js/\n## 数据结构\nlocalStorage 键表。\n'+pad('技术方案正文：文件结构、每个文件职责、数据结构与 localStorage 键表设计说明。',260));
 else if(prompt.includes('Engineering Manager'))W('llmwiki/tasks.json',JSON.stringify([{task_id:'T1',objective:'骨架',owner_agent:'coding',acceptance_criteria:'index 存在',git_branch:'t1'},{task_id:'T2',objective:'逻辑',owner_agent:'coding',acceptance_criteria:'js 存在',git_branch:'t2'}],null,1));
 else if(prompt.includes('Coding Agent')){

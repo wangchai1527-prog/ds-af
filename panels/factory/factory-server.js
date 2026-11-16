@@ -3,6 +3,7 @@
 // 并发模型：activeRuns: Map<runDir, runState>，executing 态并发上限 MAX_CONCURRENT（默认 3）
 const http=require('http'),{spawn,execSync}=require('child_process'),fs=require('fs'),path=require('path');
 const PORT=process.env.PORT||8794, RUNDIR=process.env.RUNDIR||'/root/.dsh/DS-AF/runs';
+const ANALYSES=path.join(path.dirname(RUNDIR),'analyses'); // 分析台会话根（from-plan 校验边界，防路径注入）
 const PROJFILE=process.env.PROJFILE||path.join(path.dirname(RUNDIR),'projects.json');
 const MAX_CONCURRENT=Math.max(1,parseInt(process.env.MAX_CONCURRENT||'3',10)||3);
 let _runSeq=0;const newRunDir=prefix=>path.join(RUNDIR,prefix+Date.now()+'-'+String(++_runSeq).padStart(2,'0')); // 序号防同毫秒碰撞
@@ -111,11 +112,13 @@ const NODES=[
   prompt:null,deliverable:'run 元数据',
   accept:(d,rs)=>({pass:true,detail:'idea: '+rs.idea.slice(0,50)})},
  {id:'product',name:'PRD',owner:'Product Agent',entry:'立项通过',
-  prompt:i=>`你是 Product Agent。把下面的产品想法转成 PRD，写入 llmwiki/PRD.md（中文，必须包含章节：产品定位/目标用户/功能清单(标P0/P1)/验收标准/非目标）。只写这一个文件。产品想法：${i}`,
+  prompt:(i,rs)=>{const brief=rs&&rf(path.join(rs.dir,'materials','analysis'),'BRIEF.md');
+    if(brief)return `你是 Product Agent。主要输入是分析台已收敛的立项简报 materials/analysis/BRIEF.md（同目录还有 IDEA.md/RESEARCH.md 与 materials/ 材料，按需 Read）：\n\n${brief.slice(0,2000)}\n\n据此写 llmwiki/PRD.md（中文，必须包含章节：产品定位/目标用户/功能清单(标P0/P1)/验收标准/非目标；BRIEF 已定的决策不得推翻）。原始想法（附注）：${i}。只写这一个文件。`;
+    return `你是 Product Agent。把下面的产品想法转成 PRD，写入 llmwiki/PRD.md（中文，必须包含章节：产品定位/目标用户/功能清单(标P0/P1)/验收标准/非目标）。只写这一个文件。产品想法：${i}`},
   deliverable:'PRD.md',
   accept:d=>{const c=rf(path.join(d,'llmwiki'),'PRD.md')||'';return{pass:c.length>300&&/验收标准/.test(c)&&/功能清单|功能/.test(c),detail:`${c.length}字 · 含验收标准:${/验收标准/.test(c)} · 含功能清单:${/功能清单|功能/.test(c)}`}}},
  {id:'prototype',name:'原型 Demo',owner:'Prototype Agent',entry:'PRD 验收通过（先看原型再实施）',
-  prompt:i=>`你是 Prototype Agent。读当前目录 PRD.md，产出 runtime/prototype.html：单文件可交互高保真原型（纯 HTML+CSS+JS 内联，浅色现代风格，实现 P0 功能的界面与交互骨架，数据可用内存 mock）。只写这一个文件，供人预览确认方向。`,
+  prompt:(i,rs)=>`你是 Prototype Agent。读当前目录 PRD.md，产出 runtime/prototype.html：单文件可交互高保真原型（纯 HTML+CSS+JS 内联，浅色现代风格，实现 P0 功能的界面与交互骨架，数据可用内存 mock）。只写这一个文件，供人预览确认方向。${rs&&rs.prototypeFeedback?'\n\n⚠️ 人工看过上一版原型后打回，反馈（必须照改）：'+rs.prototypeFeedback:''}`,
   deliverable:'prototype.html',
   accept:d=>{const c=rf(path.join(d,'runtime'),'prototype.html')||'';return{pass:c.length>1500&&/<html/i.test(c)&&/script|button|input/i.test(c),detail:`${c.length}B · 可交互原型:${/script|button|input/i.test(c)}`}}},
  {id:'architect',name:'技术方案',owner:'Architect Agent',entry:'PRD 验收通过',
@@ -146,7 +149,7 @@ function claudeStream(prompt,cwd,onEvent,onDone){
   const p=spawn(process.env.FACTORY_AGENT_BIN||'claude',['-p',prompt,'--output-format','stream-json','--verbose',
     '--permission-mode','acceptEdits',
     '--allowedTools','Read Write Edit Bash(node *) Bash(ls *) Bash(cat *) Bash(git *) Bash(mkdir *)',
-    '--max-turns','30'],{cwd,env:ENV});
+    '--max-turns',process.env.FACTORY_MAX_TURNS||'60'],{cwd,env:ENV}); // 30 对 6 任务体量的 coding 节点不够（实测 3 连败 error_max_turns）
   let buf='',summary='';
   p.stdout.on('data',d=>{buf+=d;let i;
     while((i=buf.indexOf('\n'))>=0){
@@ -180,7 +183,7 @@ function listArtifacts(dir){
   for(const f of fs.readdirSync(dir)){
     if(['.git','nodes.json'].includes(f))continue;
     const p=path.join(dir,f);const st=fs.statSync(p);
-    if(st.isDirectory()&&['llmwiki','runtime','loop','skills','plugins'].includes(f)){
+    if(st.isDirectory()&&['llmwiki','runtime','loop','skills','plugins','materials'].includes(f)){
       out.push({name:f,size:'dir',type:'dir'});
       for(const g of fs.readdirSync(p)){if(g==='.git')continue;const q=path.join(p,g);const st2=fs.statSync(q);
         out.push({name:f+'/'+g,size:st2.isDirectory()?'dir':st2.size+'B',type:st2.isDirectory()?'dir':path.extname(g)})}
@@ -191,14 +194,14 @@ function listArtifacts(dir){
 // ===== runState 纯函数化（不再引用全局单例） =====
 const flowNodes=flow=>flow==='fix'?FIXNODES:(flow==='iterate'?ITERNODES:NODES);
 function nodeState(rs){const ns=flowNodes(rs.flow);return ns.map((n,i)=>({id:n.id,name:n.name,owner:n.owner,entry:n.entry,deliverable:n.deliverable,status:rs.nodeStatus[i],acceptDetail:rs.acceptDetails[i]||null}))}
-function persist(rs){if(rs)fs.writeFileSync(path.join(rs.dir,'nodes.json'),JSON.stringify({idea:rs.idea,flow:rs.flow,nodeStatus:rs.nodeStatus,acceptDetails:rs.acceptDetails,ts:Date.now()},null,1))}
+function persist(rs){if(rs)fs.writeFileSync(path.join(rs.dir,'nodes.json'),JSON.stringify({idea:rs.idea,flow:rs.flow,nodeStatus:rs.nodeStatus,acceptDetails:rs.acceptDetails,gate:rs.gate||undefined,awaiting:rs.awaiting||undefined,ts:Date.now()},null,1))}
 function summarize(rs){const cur=nodeState(rs).find(n=>n.status==='running');
-  return {id:rs.id,idea:rs.idea.slice(0,120),flow:rs.flow,stage:rs.stage,executing:!!rs.executing,done:!!rs.done,
-    blocked:rs.nodeStatus.includes('blocked'),
+  return {id:rs.id,idea:rs.idea.slice(0,120),flow:rs.flow,stage:rs.stage,executing:!!rs.executing,done:rs.done,
+    blocked:rs.nodeStatus.includes('blocked'),awaiting:!!rs.awaiting,
     currentNode:cur?cur.name:(rs.nodeStatus.includes('blocked')?'⛔ '+nodeState(rs).find(n=>n.status==='blocked').name:'—'),
     nodeElapsedMs:cur&&rs.nodeStartTs?Date.now()-rs.nodeStartTs:null,
     lastAction:rs.lastAction||null,nodes:rs.nodeStatus}}
-function fullRun(rs){return {id:rs.id,idea:rs.idea,flow:rs.flow,stage:rs.stage,done:rs.done,dir:rs.dir,executing:!!rs.executing,
+function fullRun(rs){return {id:rs.id,idea:rs.idea,flow:rs.flow,stage:rs.stage,done:rs.done,dir:rs.dir,executing:!!rs.executing,awaiting:rs.awaiting||null,gate:!!rs.gate,
   nodeElapsedMs:rs.nodeStartTs?Date.now()-rs.nodeStartTs:null,lastAction:rs.lastAction||null,
   events:rs.events.slice(-300),artifacts:rs.artifacts,nodes:nodeState(rs)}}
 function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootState 与 open 共用）
@@ -210,11 +213,14 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
     let repo=null;try{repo=(JSON.parse(rf(dir,'manifest.json')||'{}').repo)||null}catch(e){}
     const rs={dir,id:path.basename(dir),idea:st.idea||'(未知)',flow:st.flow||'build',repo,parentProject:null,stage:null,
       nodeStatus:ns,acceptDetails:(st.acceptDetails||[]).map((a,i)=>ns[i]==='blocked'&&!a?'⛔ 服务重启中断，可重试续跑':a),
+      gate:!!st.gate,awaiting:st.awaiting||null,
       events:[],artifacts:listArtifacts(dir),done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null,resumed:true};
     persist(rs);
     return rs;
   }catch(e){return null}
 }
+function cpDir(src,dst){fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){const s=path.join(src,f),t=path.join(dst,f);
+  if(fs.statSync(s).isDirectory())cpDir(s,t);else fs.copyFileSync(s,t)}}
 function bootState(){ // 全量恢复所有未完 run 为 paused（不自动续跑，防重启风暴）
   try{
     let n=0;
@@ -265,6 +271,11 @@ function runFrom(rs,idx,res){
           else if(rs.flow==='fix'){newProject('fix:'+rs.idea.slice(0,16),rs.repo||rs.dir).then(pr=>{rs.projectId=pr.id;attachRun(pr.id,rs.id)})}
           emit({type:'project',text:'🗂 已登记项目索引'});
         }catch(e){}
+      }
+      if(a.pass&&n.id==='prototype'&&rs.gate){ // from-plan 流：原型确认闸（人看过原型才放行技术方案）
+        rs.awaiting={gate:'prototype',nodeIdx:idx};rs.executing=false;persist(rs);
+        emit({type:'pipeline_awaiting',node:n.id,text:'⏸ 原型已就绪 — 等待人工确认（确认通过 /api/approve go，打回重做 /api/approve redo）'});
+        if(res)res.end();return;
       }
       idx++;setTimeout(step,600);
     }
@@ -421,11 +432,62 @@ http.createServer((req,res)=>{
     });
     return;
   }
+  if(req.method==='POST'&&u.pathname==='/api/mission/from-plan'){ // 分析台下传：分析产物 = 工厂输入料（非工厂产物）
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const{analysisDir='',idea=''}=JSON.parse(b||'{}');
+      const ad=path.resolve(analysisDir);
+      if(!ad.startsWith(ANALYSES+path.sep)||!fs.existsSync(ad)||!fs.statSync(ad).isDirectory())
+        return j(res,400,{error:'analysisDir 必须位于 '+ANALYSES+' 之下的会话目录'});
+      if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
+      if(!idea.trim())return j(res,400,{error:'empty idea'});
+      const dir=newRunDir('run-');
+      scaffold(dir,'build',idea.trim(),null);
+      const dst=path.join(dir,'materials','analysis');fs.mkdirSync(dst,{recursive:true});
+      try{
+        for(const f of ['IDEA.md','RESEARCH.md','BRIEF.md']){const s=path.join(ad,f);if(fs.existsSync(s))fs.copyFileSync(s,path.join(dst,f))}
+        const msrc=path.join(ad,'materials');
+        if(fs.existsSync(msrc))cpDir(msrc,path.join(dst,'materials'));
+      }catch(e){}
+      const rs={dir,id:path.basename(dir),idea:idea.trim(),flow:'build',repo:null,parentProject:null,stage:null,
+        nodeStatus:NODES.map(_=>'pending'),acceptDetails:[],gate:true,awaiting:null,
+        events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
+      activeRuns.set(dir,rs);
+      res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});
+      res.end(JSON.stringify({id:rs.id,runId:rs.id}));
+      rs.events.push({type:'flow',flow:'build',text:'🟢 立项开发流（来自分析台下传: '+path.basename(ad)+' · 原型后设确认闸）'});
+      logLoop(dir,rs.events[rs.events.length-1]);
+      runFrom(rs,0,null);
+    });
+    return;
+  }
+  if(req.method==='POST'&&u.pathname==='/api/approve'){ // 原型确认闸：go=放行下一节点 / redo=打回只重跑原型（feedback 入 prompt）
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const{id='',decision='',feedback=''}=JSON.parse(b||'{}');
+      const rs=findRun(id);
+      if(!rs)return j(res,400,{error:'no run'});
+      if(!rs.awaiting)return j(res,400,{error:'该 run 不在确认闸（awaiting）状态'});
+      if(!['go','redo'].includes(decision))return j(res,400,{error:'decision 须为 go|redo'});
+      const idx=rs.awaiting.nodeIdx;rs.awaiting=null;persist(rs);
+      res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
+      if(decision==='redo'){
+        rs.prototypeFeedback=feedback||'';rs.nodeStatus[idx]='pending';persist(rs);
+        rs.events.push({type:'flow',text:'🔁 原型被打回重做'+(feedback?'（反馈: '+feedback.slice(0,80)+'）':'')});
+        W(res,rs.events[rs.events.length-1]);
+        runFrom(rs,idx,res);
+      }else{
+        rs.events.push({type:'flow',text:'✅ 原型确认通过 — 放行技术方案'});
+        W(res,rs.events[rs.events.length-1]);
+        runFrom(rs,idx+1,res);
+      }
+    });
+    return;
+  }
   if(req.method==='POST'&&u.pathname==='/api/retry'){ // 重试被阻断的节点（可带 {id}，缺省=最近活动 run）
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
       let id=null;try{id=JSON.parse(b||'{}').id||null}catch(e){}
       const rs=id?findRun(id):latestRun();
       if(!rs)return j(res,400,{error:'no run'});
+      if(rs.awaiting)return j(res,400,{error:'原型确认闸等待人工拍板 — 请用 /api/approve {go|redo}'});
       if(rs.executing)return j(res,400,{error:'run 正在执行'});
       const idx=rs.nodeStatus.indexOf('blocked');
       if(idx<0)return j(res,400,{error:'no blocked node'});

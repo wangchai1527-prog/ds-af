@@ -113,7 +113,7 @@ const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"
 function renderLanes(runs){
   if(!runs||!runs.length){$('lanes').innerHTML='<div style="font-size:12px;color:var(--muted)">暂无在管 run —— 输入想法开工</div>';return}
   $('lanes').innerHTML=runs.map(r=>{
-    const st=r.executing?'<span class="st run">▶ 执行中</span>':r.blocked?'<span class="st blk">⛔ 阻断</span>':r.done?'<span class="st ok">✅ 交付</span>':'<span class="st pau">⏸ 暂停</span>';
+    const st=r.executing?'<span class="st run">▶ 执行中</span>':r.blocked?'<span class="st blk">⛔ 阻断</span>':r.awaiting?'<span class="st blk" style="color:var(--warn);border-color:var(--warn)">⏸ 待确认</span>':r.done?'<span class="st ok">✅ 交付</span>':'<span class="st pau">⏸ 暂停</span>';
     const chips=r.nodes.map((s,i)=>`<span class="chipN ${s}">${ICON[s]||s} ${NODE_NAMES[r.flow]?(NODE_NAMES[r.flow][i]||s):s}</span>`).join('');
     const la=r.lastAction?`<span class="meta" title="${esc(r.lastAction.text)}">最近: ${esc((r.lastAction.text||'').slice(0,42))}</span>`:'';
     return `<div class="lane ${sel===r.id?'sel':''}" data-id="${r.id}" onclick="selectRun('${r.id}')">
@@ -137,6 +137,10 @@ function addEv(tag,cls,text,extra){
 function opsFor(run){
   if(!run)return'';
   let h='';
+  if(run.awaiting&&!run.executing){
+    h+=`<button class="mbtn" style="border-color:var(--ok);color:var(--ok)" onclick="approveRun('${run.id}','go')">✅ 原型确认 · 放行</button> `;
+    h+=`<button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="approveRun('${run.id}','redo')">🔁 打回重做</button> `;
+  }
   if(run.nodes.some(n=>n.status==='blocked')&&!run.executing)h+=`<button class="mbtn" onclick="retryRun('${run.id}')">👤 重试阻断节点</button> `;
   if(!run.executing)h+=`<button class="mbtn danger" onclick="delRun('${run.id}')">🗑 删除</button> `;
   const idx=run.artifacts&&run.artifacts.some(a=>/\.html$/.test(a.name)&&a.type!=='dir');
@@ -156,6 +160,7 @@ function renderDetail(run){
       else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
       else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+(e.deliverable||'')+' — '+e.detail,'check-ev');
       else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
+      else if(e.type==='pipeline_awaiting')addEv('确认闸','stage','⏸ '+e.text,'stage-ev');
       else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
       else if(e.type==='text')addEv('💬','think',e.text);
       else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
@@ -231,6 +236,14 @@ async function tick(){
 window.selectRun=(id,silent)=>{sel=id;selEvents=0;$('flow').innerHTML='';document.querySelectorAll('.lane').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));tick()};
 setInterval(tick,4000);tick();
 /* ===== 操作 ===== */
+window.approveRun=async(id,d)=>{
+  let feedback='';
+  if(d==='redo'){feedback=prompt('打回原型：反馈会拼进重做 prompt（例如：改成深色主题、首页加统计卡）','')||'';if(feedback===null)return}
+  else if(!confirm('确认原型方向 OK，放行进入技术方案与开发？'))return;
+  const r=await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,decision:d,feedback})});
+  if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('确认闸','stage','⛔ '+(e.error||'失败'),'block-ev');return}
+  addEv('确认闸','stage',d==='go'?'✅ 已放行':'🔁 已打回重做','stage-ev');tick();
+};
 window.retryRun=async id=>{
   const r=await fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('重试','stage','⛔ '+(e.error||'失败'),'block-ev');return}
