@@ -8,7 +8,8 @@ DS-AF/
 │   ├── workbench/     # DSH 工作台 1.0 · Cockpit 总入口        :8790
 │   ├── factory/       # Engineering Factory · 双流节点管理制     :8794
 │   ├── vibe-studio/   # Vibe Coding Studio · 执行直播           :8793
-│   └── replay/        # 编排回放 demo（纯静态）                  :8791
+│   ├── replay/        # 编排回放 demo（纯静态）                  :8791
+│   └── cc-web/        # Claude Code WebUI（社区件包本机 CLI）     :8796
 ├── runs/              # 工厂产出（Workspace Standard 1.0）
 │   ├── run-<id>/      # 立项开发流：manifest/loop/llmwiki/runtime/skills/plugins
 │   └── fix-<id>/      # 运维修复流：知识层在此，执行绑定目标仓库
@@ -19,7 +20,7 @@ DS-AF/
 ```
 
 ## 端口分配
-8790 工作台 · 8791 回放 · 8793 Studio · 8794 工厂 · 8795 登录样例
+8790 工作台 · 8791 回放 · 8793 Studio · 8794 工厂 · 8795 登录样例 · 8796 Claude Code WebUI（工作台右侧边栏挂载）
 
 ## 纪律
 - 新面板必须建目录进 panels/，禁止顶层散放 html

@@ -1,0 +1,4 @@
+{
+ "type": "idea",
+ "text": "目前的开发Agent底层是谁在干活呢，我们的分分工就是Claude code 但是目前的开发有了新的明确流程规范，包括后期的运维，但是 我们也可以用vs code 来做开发管理，所以这个开发工作是到底应该在哪里完成交互呢， vs code 可以通过图形化终端启动claude code 来完成Vibe coding开发任务。"
+}

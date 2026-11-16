@@ -98,7 +98,26 @@ footer{text-align:center;color:#a3a3a3;font-size:12px;margin-top:8px}
     <div class="eco" id="eco"></div>
   </div>
 
-  <footer>DSH 工作台 1.0 · 架构对齐「一个后台，多个独立工作入口」· Engineering = Factory v2 节点管理制</footer>
+  
+<div id="ccToggle" style="position:fixed;right:0;top:45%;z-index:99;background:#1a1a1a;color:#fff;padding:14px 8px;border-radius:10px 0 0 10px;cursor:pointer;writing-mode:vertical-rl;font-size:13px;letter-spacing:2px;box-shadow:-2px 0 10px rgba(0,0,0,.2)">⌨ Claude Code</div>
+<div id="ccPanel" style="position:fixed;right:-520px;top:0;width:500px;height:100vh;z-index:98;box-shadow:-4px 0 24px rgba(0,0,0,.18);transition:right .25s;background:#fff">
+  <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:#1a1a1a;color:#fff">
+    <b style="font-size:13px">⌨ Claude Code · 本机 CLI WebUI</b>
+    <span><a href="http://23.27.169.181:8796/" target="_blank" style="color:#93c5fd;font-size:12px;margin-right:10px">新窗口 ↗</a>
+    <span id="ccClose" style="cursor:pointer;font-size:16px">✕</span></span>
+  </div>
+  <iframe id="ccFrame" style="width:100%;height:calc(100vh - 37px);border:0"></iframe>
+</div>
+<script>
+(function(){
+  let open=false;
+  const tog=()=>{open=!open;document.getElementById('ccPanel').style.right=open?'0':'-520px';
+    if(open&&!document.getElementById('ccFrame').src)document.getElementById('ccFrame').src='http://23.27.169.181:8796/'};
+  document.getElementById('ccToggle').onclick=tog;
+  document.getElementById('ccClose').onclick=tog;
+})();
+</script>
+<footer>DSH 工作台 1.0 · 架构对齐「一个后台，多个独立工作入口」· Engineering = Factory v2 节点管理制</footer>
 </div>
 <script>
 const $=id=>document.getElementById(id);
