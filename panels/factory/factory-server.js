@@ -221,6 +221,20 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
 }
 function cpDir(src,dst){fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){const s=path.join(src,f),t=path.join(dst,f);
   if(fs.statSync(s).isDirectory())cpDir(s,t);else fs.copyFileSync(s,t)}}
+function pushIfPossible(repoDir,remoteUrl){ // best-effort 推送：任何失败只记 note 不 throw；token 只走临时 URL，绝不进 config/磁盘
+  try{
+    if(!remoteUrl)return{pushed:false,note:'未绑定远程'};
+    const tok=process.env.DSH_GIT_TOKEN;
+    if(!tok)return{pushed:false,note:'未配置 DSH_GIT_TOKEN — 推送跳过'};
+    let url=remoteUrl;
+    if(url.startsWith('https://github.com/'))url='https://x-access-token:'+tok+'@github.com/'+url.slice(19);
+    else url='https://x-access-token:'+tok+'@github.com/'+url.slice('git@github.com:'.length);
+    try{execSync('git -C '+repoDir+' remote remove origin',{env:ENV,stdio:'pipe'})}catch(e){}
+    execSync('git -C '+repoDir+' remote add origin '+remoteUrl,{env:ENV,stdio:'pipe'}); // config 存干净 URL
+    execSync('git -C '+repoDir+' push -u '+url+' HEAD',{env:ENV,stdio:'pipe'}); // 推送用临时 token URL
+    return{pushed:true,note:'已推送 '+remoteUrl};
+  }catch(e){return{pushed:false,note:'推送失败: '+String(e.message||e).replace(process.env.DSH_GIT_TOKEN||'','***').slice(0,140)}}
+}
 function bootState(){ // 全量恢复所有未完 run 为 paused（不自动续跑，防重启风暴）
   try{
     let n=0;
@@ -272,6 +286,14 @@ function runFrom(rs,idx,res){
           else if(rs.flow==='fix'){newProject('fix:'+rs.idea.slice(0,16),rs.repo||rs.dir).then(pr=>{rs.projectId=pr.id;attachRun(pr.id,rs.id)})}
           emit({type:'project',text:'🗂 已登记项目索引'});
         }catch(e){}
+      }
+      if(a.pass&&n.id==='delivery'&&rs.flow!=='fix'){ // 交付通过 → best-effort 推 GitHub（失败不阻断交付）
+        const repoDir=rs.flow==='build'?path.join(rs.dir,'product'):rs.repo;
+        if(repoDir)projMutate(p=>{const pr=p.find(x=>x.id===rs.projectId);return pr?(pr.remote||null):null}).then(remote=>{
+          const r=pushIfPossible(repoDir,remote);
+          emit({type:'push',pushed:r.pushed,text:(r.pushed?'☁️ 已推送: ':'☁️ 推送跳过: ')+r.note});
+          rs.acceptDetails[idx]+=' · 推送:'+r.note;persist(rs);
+        });
       }
       if(a.pass&&n.id==='prototype'&&rs.gate){ // from-plan 流：原型确认闸（人看过原型才放行技术方案）
         rs.awaiting={gate:'prototype',nodeIdx:idx};rs.executing=false;persist(rs);
@@ -430,6 +452,18 @@ http.createServer((req,res)=>{
       rs.events.push({type:'flow',flow:cls.flow,text:cls.flow==='fix'?'🔧 运维修复流（工作区绑定: '+dir+'）':'🟢 立项开发流'});
       W(res,rs.events[rs.events.length-1]);
       runFrom(rs,0,res);
+    });
+    return;
+  }
+  if(req.method==='POST'&&u.pathname==='/api/projects/remote'){ // 项目绑 GitHub 远程（空=解绑）
+    let b='';req.on('data',c=>b+=c);req.on('end',async()=>{
+      const{id='',remote=''}=JSON.parse(b||'{}');
+      if(remote&&!(remote.startsWith('https://github.com/')||remote.startsWith('git@github.com:')))
+        return j(res,400,{error:'remote 仅支持 GitHub（https://github.com/… 或 git@github.com:…）'});
+      let found=null;
+      await projMutate(p=>{found=p.find(x=>x.id===id);if(found)found.remote=remote||null});
+      if(!found)return j(res,404,{error:'no project'});
+      return j(res,200,{ok:true,remote:remote||null});
     });
     return;
   }

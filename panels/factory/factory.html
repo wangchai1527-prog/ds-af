@@ -297,7 +297,12 @@ async function loadRuns(){
             <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑删任务</button>
           </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">（无任务记录）</div>'}
         </div>
-        <div style="margin-top:10px;display:flex;gap:8px">
+        <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <input id="rm-${p.id}" value="${esc(p.remote||'')}" placeholder="https://github.com/user/repo（绑远程后交付自动推送）" style="flex:1;min-width:220px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--mono)">
+          <button class="mbtn" onclick="bindRemote('${p.id}')">🔗 绑远程</button>
+          <button class="mbtn" onclick="bindRemote('${p.id}',true)" title="清空即解绑">解绑</button>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
           <button class="mbtn danger" onclick="delProj('${p.id}',${(p.runs||[]).length})">🗑 删除整个项目（${(p.runs||[]).length} 任务+产品代码全部清零）</button>
         </div>
       </div>`).join('')
@@ -308,6 +313,11 @@ async function loadRuns(){
       </div>`).join('');
   }catch(e){$('runlist').innerHTML='<div style="color:var(--err);font-size:12px">加载失败</div>'}
 }
+window.bindRemote=async(id,clear)=>{
+  const remote=clear?'':(document.getElementById('rm-'+id).value.trim());
+  const r=await(await fetch('/api/projects/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,remote})})).json().catch(()=>({}));
+  if(r.error)alert('绑定失败：'+r.error);else{alert(remote?'已绑定 '+remote:'已解绑');loadRuns()}
+};
 window.delProj=async(id,n)=>{
   if(!confirm('删除项目 '+id+'：将删除 '+n+' 个任务与产品代码，不可恢复。确认？'))return;
   const r=await(await fetch('/api/projects/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
