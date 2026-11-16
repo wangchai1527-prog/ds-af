@@ -36,6 +36,8 @@ main{flex:1;display:grid;grid-template-columns:1fr 350px;overflow:hidden}
 .ev.stage-ev .body{font-family:inherit;font-weight:600;font-size:13px}
 .ev.check-ev .body{font-family:var(--mono);font-size:12px}
 .ev.block-ev .body{color:var(--err);font-family:inherit;font-weight:700}
+.mbtn{font-size:12px;padding:5px 12px;border-radius:7px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.mbtn:hover{background:#f5f7fa}
 #retrybar{display:none;padding:10px 20px;background:#fef2f2;border-top:1px solid var(--err);flex-shrink:0;align-items:center;gap:12px}
 #retryBtn{padding:8px 20px;border-radius:8px;border:0;background:var(--err);color:#fff;font-weight:600;cursor:pointer}
 #inputbar{padding:14px 20px;background:var(--card);border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
@@ -64,9 +66,19 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:6px 20p
 </header>
 <main>
   <div id="left">
+    <div style="display:flex;gap:0;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0">
+      <div class="ptab on" id="tabRun" style="padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)">▶ 当前任务</div>
+      <div class="ptab" id="tabProj" style="padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)">🗂 项目管理</div>
+    </div>
+    <div id="projPanel" style="display:none;flex:1;overflow-y:auto;padding:14px 18px">
+      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">已立项项目 · 查看 / 迭代（增改）/ 回滚（撤）/ 删除</div>
+      <div id="runlist"></div>
+    </div>
+    <div id="runPanel" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
     <div id="nodes"><div style="font-size:12px;color:var(--muted);padding:8px 4px">立项后按节点跟进…</div></div>
     <div id="flow"><div class="ev"><span class="tag stage">START</span><div class="body">输入产品想法立项 → 工厂按 7 个管理节点推进：每个节点有负责人/交付物/验收判据，验收不过流水线即停（⛔），人工重试后才能继续 —— 防止跑偏。</div></div></div>
     <div id="retrybar">⛔ <span id="retryMsg" style="font-size:13px;color:var(--err)"></span><button id="retryBtn">👤 重试被阻断节点</button></div>
+    </div>
     <div id="inputbar">
       <input id="inp" placeholder="产品想法，例：做一个记账小应用，支持分类统计和月度报表…" autocomplete="off">
       <button id="send">🚀 立项开工</button>
@@ -215,6 +227,58 @@ async function stream(fp){
   ui(await state());
 }
 async function state(){try{return (await(await fetch('/api/state')).json()).run||{}}catch(_){return{}}}
+/* ===== 项目管理 CRUD ===== */
+const FLOWN={build:'🟢 立项开发',fix:'🔧 运维修复',iterate:'🔁 迭代开发'};
+const STN={delivered:'✅ 已交付',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
+async function loadRuns(){
+  try{
+    const d=await(await fetch('/api/runs')).json();
+    $('runlist').innerHTML=d.runs.map(r=>`
+      <div style="border:1px solid var(--border);border-radius:10px;padding:10px 14px;margin-bottom:8px;background:#fff">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <b style="font-family:var(--mono);font-size:12px">${r.id}</b>
+          <span style="font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)">${FLOWN[r.flow]||r.flow}</span>
+          <span style="font-size:11px;color:${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
+          ${d.active===r.id?'<span style="font-size:11px;color:var(--primary)">● 当前</span>':''}
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin:4px 0 8px">${(r.idea||'').slice(0,60)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="mbtn" onclick="viewRun('${r.id}')">📂 查看</button>
+          ${r.status==='delivered'?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁 迭代…</button>
+          <button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="rbRun('${r.id}')">↩️ 回滚上一版</button>`:''}
+          <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑 删除</button>
+        </div>
+      </div>`).join('')||'<div style="color:var(--muted);font-size:13px">暂无项目</div>';
+  }catch(e){$('runlist').innerHTML='<div style="color:var(--err);font-size:12px">加载失败</div>'}
+}
+window.viewRun=id=>{ // 查看：切到当前任务视图并恢复该项目状态
+  showTab('run');addEv('查看','stage','📂 载入项目 '+id+'（只读视图，进度来自其 nodes.json）','stage-ev');
+  fetch('/api/state').then(r=>r.json()).then(()=>{toast('已切回当前任务视图；历史项目详情见其 runs 目录')});
+};
+window.iterRun=id=>{
+  const idea=prompt('迭代需求（对 '+id+' 的产品做增量开发，外科式最小改动）：','');
+  if(!idea)return;
+  showTab('run');$('flow').innerHTML='';
+  stream(fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea})}));
+};
+window.rbRun=async id=>{
+  if(!confirm('回滚 '+id+' 的最近一次 git 提交？(git revert，可再撤回)'))return;
+  const r=await(await fetch('/api/runs/rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  toast(r.ok?'✅ 已回滚: '+r.reverted:'❌ '+r.error);loadRuns();
+};
+window.delRun=async id=>{
+  if(!confirm('彻底删除项目 '+id+'（含代码与证据，不可恢复）？'))return;
+  const r=await(await fetch('/api/runs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  toast(r.ok?'🗑 已删除':'❌ '+r.error);loadRuns();
+};
+function showTab(t){
+  $('tabRun').classList.toggle('on',t==='run');$('tabProj').classList.toggle('on',t==='proj');
+  $('tabRun').style.cssText=t==='run'?'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)';
+  $('tabProj').style.cssText=t==='proj'?'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)';
+  $('projPanel').style.display=t==='proj'?'':'none';$('runPanel').style.display=t==='run'?'flex':'none';
+  if(t==='proj')loadRuns();
+}
+$('tabRun').onclick=()=>showTab('run');$('tabProj').onclick=()=>showTab('proj');
 (async()=>{const s=await state();if(s&&s.idea&&!s.done){$('inp').value=s.idea;ui(s);addEv('恢复','stage','已从 nodes.json 恢复节点进度（刷新不丢）','stage-ev')}else if(s&&s.idea){ui(s)}})();
 </script>
 </body>

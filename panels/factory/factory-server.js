@@ -49,6 +49,33 @@ const FIXNODES=[
     return{pass:!!c&&commits.includes('fix'),detail:`DELIVERY.md:${!!c} · fix提交:${commits.split('\n').length} 条`}}},
 ];
 
+const ITERNODES=[
+ {id:'kickoff',name:'迭代立项',owner:'👤 人',entry:'增量需求已提交',prompt:null,deliverable:'run 元数据',
+  accept:d=>({pass:true,detail:'iterate: '+run.idea.slice(0,50)})},
+ {id:'product',name:'增量PRD',owner:'Product Agent',entry:'迭代立项',deliverable:'llmwiki/PRD.md',
+  prompt:i=>`你是 Product Agent。这是对已有产品的迭代（仓库 ${run.repo}）。先 Read 仓库现有代码了解现状，再写 llmwiki/PRD.md（中文：迭代目标/新增或修改功能清单/验收标准/不改动范围——明确外科式边界）。增量需求：${i}`,
+  accept:d=>{const c=rf(path.join(d,'llmwiki'),'PRD.md')||'';return{pass:c.length>250&&/验收标准/.test(c),detail:c.length+'字 · 含验收标准:'+(/验收标准/.test(c))}}},
+ {id:'manager',name:'任务拆解',owner:'Eng Manager',entry:'增量PRD通过',deliverable:'llmwiki/tasks.json',
+  prompt:i=>`你是 Engineering Manager。读 llmwiki/PRD.md 和目标仓库 ${run.repo} 的现有代码结构，写 llmwiki/tasks.json：JSON数组(2-5个增量任务)，每项含 task_id,objective,owner_agent(coding|qa),acceptance_criteria,git_branch。改动必须最小化。`,
+  accept:d=>{try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));return{pass:Array.isArray(t)&&t.length>=1&&t.every(x=>x.task_id&&x.objective&&x.acceptance_criteria),detail:t.length+' 份增量合同'}}catch(e){return{pass:false,detail:'解析失败'}}}},
+ {id:'coding',name:'增量开发',owner:'Coding Agent',entry:'合同通过',deliverable:'父仓代码 diff',
+  prompt:i=>`你是 Coding Agent。读 llmwiki/PRD.md 和 llmwiki/tasks.json，到目标仓库 ${run.repo} 实施增量改动：外科式最小修改，禁止重构无关代码，每完成一个任务在 llmwiki/tasks.json 标 status:done。改完运行可运行的验证。回执 [STATUS]/[CHANGES]/[TESTS]。`,
+  accept:d=>{try{const out=execSync('git -C '+run.repo+' status --short 2>/dev/null||echo NO',{encoding:'utf8',env:ENV}).trim();let all=true;try{all=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json')).every(t=>t.status==='done')}catch(e){}return{pass:!!out&&out!=='NO'&&all,detail:'父仓变更 '+out.split('\n').length+' 文件 · 任务全done:'+all}}catch(e){return{pass:false,detail:'无法检测'}}}},
+ {id:'qa',name:'回归验证',owner:'QA Agent',entry:'增量完成',deliverable:'llmwiki/QA-Report.md',
+  prompt:i=>`你是 QA Agent（只读+可运行，禁改代码）。对照 llmwiki/PRD.md 验收标准，在仓库 ${run.repo} 逐项验证增量功能，并抽查原有功能无回归。写 llmwiki/QA-Report.md（结论含 PASS/PARTIAL/FAIL）。`,
+  accept:d=>{const c=rf(path.join(d,'llmwiki'),'QA-Report.md')||'';return{pass:c.length>150&&/PASS|PARTIAL|FAIL/.test(c),detail:'结论:'+(c.match(/PASS|PARTIAL|FAIL/g)||[]).join(',')}}},
+ {id:'delivery',name:'交付',owner:'DevOps Agent',entry:'回归 PASS/PARTIAL',deliverable:'父仓版本提交',
+  prompt:i=>`你是 DevOps Agent。在目标仓库 ${run.repo} 执行 git add -A && git commit -m "iterate: 增量交付 v+（保持外科式边界）"。写 llmwiki/DELIVERY.md（增量摘要/改动文件/回归结果）。不改代码。`,
+  accept:d=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let ok=false;try{ok=execSync('git -C '+run.repo+' log --oneline -1',{encoding:'utf8',env:ENV}).includes('iterate')}catch(e){}
+    return{pass:!!c&&ok,detail:'DELIVERY.md:'+!!c+' · iterate提交:'+ok}}},
+];
+function findIndexHtmlRoot(dir){ // 返回含 index.html 的最近目录（含 runtime/）
+  if(!dir)return null;
+  const cand=[path.join(dir,'runtime'),dir];
+  for(const c of cand){if(rf(c,'index.html')||rf(c,'prototype.html'))return c}
+  return null;
+}
+
 const NODES=[
  {id:'kickoff',name:'立项',owner:'👤 人',entry:'产品想法已提交',
   prompt:null,deliverable:'run 元数据',
@@ -131,7 +158,7 @@ function listArtifacts(dir){
   }
   return out;
 }
-function flowNodes(){return run&&run.flow==='fix'?FIXNODES:NODES}
+function flowNodes(){return run&&run.flow==='fix'?FIXNODES:(run&&run.flow==='iterate'?ITERNODES:NODES)}
 function nodeState(){return flowNodes().map((n,i)=>({id:n.id,name:n.name,owner:n.owner,entry:n.entry,deliverable:n.deliverable,status:run.nodeStatus[i],acceptDetail:run.acceptDetails[i]||null}))}
 function persist(){if(run)fs.writeFileSync(path.join(run.dir,'nodes.json'),JSON.stringify({idea:run.idea,flow:run.flow,nodeStatus:run.nodeStatus,acceptDetails:run.acceptDetails,ts:Date.now()},null,1))}
 function bootState(){ // 服务重启后从磁盘恢复节点状态（防刷新/重启丢进度）
@@ -147,8 +174,9 @@ function bootState(){ // 服务重启后从磁盘恢复节点状态（防刷新/
 function runFrom(idx,res){
   // 从第 idx 个节点起执行（重试入口也走这里）
   const emit=e=>{run.events.push(e);logLoop(run.dir,e);if(res)W(res,e)};
+  run.executing=true;
   const step=()=>{
-    if(idx>=flowNodes().length){run.done=true;persist();emit({type:'all_done',text:'🏁 全部节点验收通过 — 产物已就绪'});if(res)res.end();return}
+    if(idx>=flowNodes().length){run.executing=false;run.done=true;persist();emit({type:'all_done',text:'🏁 全部节点验收通过 — 产物已就绪'});if(res)res.end();return}
     const n=flowNodes()[idx];
     run.stage=n.id;run.nodeStatus[idx]='running';persist();
     emit({type:'node_start',node:n.id,name:n.name,owner:n.owner,entry:n.entry,deliverable:n.deliverable});
@@ -165,7 +193,7 @@ function runFrom(idx,res){
       run.nodeStatus[idx]=a.pass?'done':'blocked';
       run.artifacts=listArtifacts(run.dir);persist();
       emit({type:'node_check',node:n.id,pass:a.pass,detail:a.detail,deliverable:n.deliverable});
-      if(!a.pass){emit({type:'pipeline_blocked',node:n.id,text:`⛔ 节点「${n.name}」验收未过，流水线已停止 — 修正后可重试本节点`});if(res)res.end();return}
+      if(!a.pass){run.executing=false;emit({type:'pipeline_blocked',node:n.id,text:`⛔ 节点「${n.name}」验收未过，流水线已停止 — 修正后可重试本节点`});if(res)res.end();return}
       idx++;setTimeout(step,600);
     }
   };
@@ -190,6 +218,69 @@ http.createServer((req,res)=>{
     const name=new URL(req.url,'http://x').searchParams.get('name');
     if(!run)return j(res,400,{});
     try{return j(res,200,{content:fs.readFileSync(path.join(run.dir,name),'utf8').slice(0,8000)})}catch(e){return j(res,404,{})}
+  }
+  // ===== 项目 CRUD =====
+  if(req.method==='GET'&&req.url==='/api/runs'){
+    const list=[];
+    try{
+      for(const d of fs.readdirSync(RUNDIR).sort().reverse()){
+        const p=path.join(RUNDIR,d);
+        if(!fs.statSync(p).isDirectory()||!d.startsWith('run-')&&!d.startsWith('fix-'))continue;
+        let meta={idea:'(未知)',flow:'build',nodeStatus:[]};
+        try{meta=JSON.parse(rf(p,'nodes.json')||'{}')}catch(e){}
+        const blocked=(meta.nodeStatus||[]).includes('blocked');
+        const done=(meta.nodeStatus||[]).length&&meta.nodeStatus[meta.nodeStatus.length-1]==='done'&&!blocked;
+        list.push({id:d,idea:meta.idea||'',flow:meta.flow||'build',ts:meta.ts||0,
+          status:blocked?'blocked':(done?'delivered':((meta.nodeStatus||[]).includes('running')?'running':'paused')),
+          nodes:meta.nodeStatus||[]});
+      }
+    }catch(e){}
+    return j(res,200,{runs:list,active:run&&!run.done?run.dir&&path.basename(run.dir):null});
+  }
+  if(req.method==='POST'&&req.url==='/api/runs/delete'){
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const id=(JSON.parse(b||'{}').id||'').replace(/[\/..]/g,'');
+      const p=path.join(RUNDIR,id);
+      if(!id||!fs.existsSync(p)||!p.startsWith(RUNDIR))return j(res,400,{error:'bad id'});
+      if(run&&run.dir===p&&run.executing)return j(res,409,{error:'正在执行的任务不可删除'});
+      fs.rmSync(p,{recursive:true});
+      if(run&&run.dir===p){run=null; // 当前任务被删 → 开发任务清零
+        try{fs.rmSync('/tmp/.factory-active',{force:true})}catch(e){}}
+      return j(res,200,{ok:true,clearedActive:true});
+    });
+    return;
+  }
+  if(req.method==='POST'&&req.url==='/api/runs/rollback'){
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const id=(JSON.parse(b||'{}').id||'').replace(/[\/..]/g,'');
+      const p=path.join(RUNDIR,id);
+      if(!fs.existsSync(p))return j(res,404,{error:'no run'});
+      try{
+        const before=execSync('git -C '+p+' log --oneline',{encoding:'utf8',env:ENV}).trim().split('\n');
+        execSync('git -C '+p+' revert --no-edit HEAD',{encoding:'utf8',env:ENV,stdio:'pipe'});
+        const after=execSync('git -C '+p+' log --oneline',{encoding:'utf8',env:ENV}).trim().split('\n');
+        return j(res,200,{ok:true,reverted:before[0],now:after[0],commits:after.length});
+      }catch(e){return j(res,400,{error:'回滚失败: '+(e.message||'').slice(0,150)})}
+    });
+    return;
+  }
+  if(req.method==='POST'&&req.url==='/api/runs/iterate'){
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      const {id='',idea=''}=JSON.parse(b||'{}');
+      const parent=path.join(RUNDIR,id.replace(/[\/..]/g,''));
+      const repo=findIndexHtmlRoot(parent);
+      if(!repo)return j(res,400,{error:'父项目无产品代码，不能迭代'});
+      if(run&&!run.done)return j(res,409,{error:'factory busy'});
+      if(!idea.trim())return j(res,400,{error:'empty idea'});
+      const dir=path.join(RUNDIR,'run-'+Date.now());
+      scaffold(dir,'iterate',idea,repo);
+      run={dir,idea,flow:'iterate',repo,stage:null,nodeStatus:ITERNODES.map(_=>'pending'),acceptDetails:[],events:[],artifacts:[],done:false};
+      res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
+      run.events.push({type:'flow',flow:'iterate',text:'🔁 迭代开发流（基于 '+id+' 的产品，仓库: '+repo+'）'});
+      W(res,run.events[run.events.length-1]);
+      runFrom(0,res);
+    });
+    return;
   }
   if(req.method==='POST'&&req.url==='/api/mission'){
     let body='';req.on('data',c=>body+=c);req.on('end',()=>{
