@@ -221,6 +221,31 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
 }
 function cpDir(src,dst){fs.mkdirSync(dst,{recursive:true});for(const f of fs.readdirSync(src)){const s=path.join(src,f),t=path.join(dst,f);
   if(fs.statSync(s).isDirectory())cpDir(s,t);else fs.copyFileSync(s,t)}}
+// ===== 目录规范机器巡检（只读，不自动删）—— 产物落位靠机器约束，不靠节点 prompt 自觉 =====
+const TOP_ALLOWED=['.git','.gitignore','README.md','analyses','archive','logs','panels','projects.json','runs','samples','wiki','docs','.oss.env','.env','.claude','node_modules'];
+const RUN_ALLOWED=['loop','llmwiki','runtime','skills','plugins','product','materials','.git','manifest.json','nodes.json','README.md'];
+function checkWorkspace(){
+  const issues=[];const root=path.dirname(RUNDIR);
+  try{for(const e of fs.readdirSync(root)){if(!TOP_ALLOWED.includes(e))issues.push({where:path.basename(root)+'/'+e,what:'顶层散落（非白名单条目）'})}}catch(e){}
+  try{
+    for(const d of fs.readdirSync(RUNDIR)){
+      const p=path.join(RUNDIR,d);
+      if(!fs.statSync(p).isDirectory())continue;
+      if(!/^(run|fix)-/.test(d))issues.push({where:'runs/'+d,what:'runs/ 下目录须以 run-/fix- 开头'});
+      else{
+        if(!rf(p,'manifest.json'))issues.push({where:'runs/'+d,what:'残缺：缺 manifest.json'});
+        if(!rf(p,'nodes.json'))issues.push({where:'runs/'+d,what:'残缺：缺 nodes.json'});
+        for(const e of fs.readdirSync(p)){if(!RUN_ALLOWED.includes(e))issues.push({where:'runs/'+d+'/'+e,what:'run 内一级散落（产物须落 llmwiki/runtime/product/materials 等）'})}
+      }
+    }
+  }catch(e){}
+  for(const pr of loadProjects())for(const rid of pr.runs||[])
+    if(!fs.existsSync(path.join(RUNDIR,rid)))issues.push({where:'projects.json→'+pr.id,what:'悬空 runId: '+rid});
+  const AN=path.join(root,'analyses');
+  try{for(const d of fs.readdirSync(AN)){const p=path.join(AN,d);
+    if(fs.statSync(p).isDirectory()&&!d.startsWith('an-'))issues.push({where:'analyses/'+d,what:'analyses/ 下目录须以 an- 开头'})}}catch(e){}
+  return{ok:issues.length===0,issues};
+}
 function pushIfPossible(repoDir,remoteUrl){ // best-effort 推送：任何失败只记 note 不 throw；token 只走临时 URL，绝不进 config/磁盘
   try{
     if(!remoteUrl)return{pushed:false,note:'未绑定远程'};
@@ -337,6 +362,7 @@ http.createServer((req,res)=>{
     try{return j(res,200,{content:fs.readFileSync(path.join(rs.dir,name),'utf8').slice(0,8000)})}catch(e){return j(res,404,{})}
   }
   // ===== 项目树 =====
+  if(req.method==='GET'&&u.pathname==='/api/workspace/check')return j(res,200,checkWorkspace());
   if(req.method==='GET'&&u.pathname==='/api/projects'){
     const projs=loadProjects();
     const out=projs.map(pr=>({...pr,

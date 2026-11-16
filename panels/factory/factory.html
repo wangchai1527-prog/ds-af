@@ -78,6 +78,7 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:5px 20p
   <span class="badge pool" id="poolBadge">并发 0/3</span>
   <div id="counts"></div>
   <div style="flex:1"></div>
+  <button class="mbtn" style="margin-right:8px" onclick="lintWs()">🧹 巡检</button>
   <div class="ptab on" id="tabRun" style="padding:6px 14px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)">▶ 并发看板</div>
   <div class="ptab" id="tabProj" style="padding:6px 14px;font-size:13px;cursor:pointer;color:var(--muted)">🗂 项目管理</div>
 </header>
@@ -313,6 +314,13 @@ async function loadRuns(){
       </div>`).join('');
   }catch(e){$('runlist').innerHTML='<div style="color:var(--err);font-size:12px">加载失败</div>'}
 }
+window.lintWs=async()=>{
+  const r=await(await fetch('/api/workspace/check')).json().catch(()=>({ok:null}));
+  if(r.ok===null){alert('巡检接口不可达');return}
+  if(r.ok){addEv('巡检','stage','🧹 目录规范巡检通过（0 issue）','stage-ev');return}
+  addEv('巡检','stage','🧹 巡检发现 '+r.issues.length+' 个目录规范问题：','stage-ev');
+  for(const i of r.issues)addEv('问题','check',i.where+' — '+i.what,'block-ev');
+};
 window.bindRemote=async(id,clear)=>{
   const remote=clear?'':(document.getElementById('rm-'+id).value.trim());
   const r=await(await fetch('/api/projects/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,remote})})).json().catch(()=>({}));
