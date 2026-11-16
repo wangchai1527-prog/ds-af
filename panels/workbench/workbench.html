@@ -58,8 +58,13 @@ footer{text-align:center;color:#a3a3a3;font-size:12px;margin-top:8px}
   <div class="layer">
     <div class="band" style="background:#fff">🚪 工作入口（独立 Session · 独立 Workspace · 不串台）</div>
     <div class="grid">
+      <div class="entry" style="border-color:#7c3aed;box-shadow:0 0 0 3px #f5f3ff">
+        <h3>💡 Idea Plan 工作入口 <span class="st live" id="planSt">LIVE</span></h3>
+        <p>分析到立项：想法进来 → 轮次化分析（事实基线/决策点表/活文档）→ 人拍板 GO 才下发工厂。防重复立项，no-go/park 可复活续轮。</p>
+        <a class="go" style="background:#7c3aed;color:#fff" id="planLink" target="_blank" href="http://23.27.169.181:8792">进入 Idea Plan →</a>
+      </div>
       <div class="entry">
-        <h3>📊 Quant 工作入口 <span class="st plan">规划中 v1.x</span></h3>
+        <h3>📊 Quant 工作入口 <span class="st plan">规划中 v2.x</span></h3>
         <p>策略研究、回测分析、量化运维 —— 承接 Alpha-Forge 现有能力（X8/MT5 数据口、EXP 回路），进入 Cockpit 统一任务合同制。</p>
         <span class="go" style="background:#f5f5f5;color:var(--muted)">待接入</span>
       </div>
@@ -104,6 +109,8 @@ const $=id=>document.getElementById(id);
     $('engSt').textContent=eng.busy?'执行中':(eng.done?'LIVE · 已交付':'LIVE');
     $('engSt').className='st '+(eng.busy?'busy':'live');
     if(eng.nodes)$('engLink').href=eng.link;
+    const ps=(d.services||[]).find(s=>s.port===8792);
+    if(ps){$('planSt').textContent=ps.up?'LIVE':'离线';$('planSt').className='st '+(ps.up?'live':'plan');}
     const doneN=(eng.nodes||[]).filter(n=>n.status==='done').length;
     $('stats').innerHTML=`
       <div class="stat"><b>${d.runs.length}</b><span>研发 Run 记录</span></div>

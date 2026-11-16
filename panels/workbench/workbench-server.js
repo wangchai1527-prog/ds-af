@@ -21,18 +21,19 @@ http.createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/api/overview'){
     const [factory, servers] = await Promise.all([
       fetchJson(FACTORY+'/api/state'),
-      Promise.all([8791,8793,8794,8795].map(p=>portUp(p))),
+      Promise.all([8791,8792,8793,8794,8795].map(p=>portUp(p))),
     ]);
     let runs=[];
     try{runs=fs.readdirSync('/root/.dsh/DS-AF/runs').filter(d=>d.startsWith('run-')).sort().reverse().slice(0,6)}catch(e){}
     let claudeVer='';try{claudeVer=execSync('claude --version',{encoding:'utf8',env:ENV}).trim().split('\n')[0]}catch(e){claudeVer='未检出'}
     let pw='';try{pw=execSync('/home/administrator/.hermes/node/bin/npx playwright --version',{encoding:'utf8',env:ENV}).trim()}catch(e){pw='未检出'}
     const r=factory&&factory.run;
+    const anyExec=factory&&Array.isArray(factory.runs)&&factory.runs.some(x=>x.executing); // 并发制：任一 run 在跑即忙
     return res.end(JSON.stringify({
       cockpit:{version:'1.0',ts:new Date().toISOString()},
       engineering:{
         live:servers[2],
-        busy:r&&!r.done,
+        busy:anyExec||(r&&!r.done),
         done:r&&r.done,
         idea:r?r.idea:null,
         nodes:r?r.nodes:null,
@@ -40,9 +41,10 @@ http.createServer(async(req,res)=>{
       },
       services:[
         {port:8791,name:'编排回放 demo',up:servers[0]},
-        {port:8793,name:'Vibe Coding Studio',up:servers[1]},
-        {port:8794,name:'Engineering Factory v2',up:servers[2]},
-        {port:8795,name:'ENG-UI-001 登录页样例',up:servers[3]},
+        {port:8792,name:'Idea Plan 分析台',up:servers[1]},
+        {port:8793,name:'Vibe Coding Studio',up:servers[2]},
+        {port:8794,name:'Engineering Factory v2',up:servers[3]},
+        {port:8795,name:'ENG-UI-001 登录页样例',up:servers[4]},
       ],
       runs,
       runtime:{claude:claudeVer,playwright:pw},

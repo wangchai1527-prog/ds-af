@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Idea Plan 分析台 · 分析到立项</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#7c3aed;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+.logo{font-weight:700}.logo span{color:var(--primary)}
+.sub{font-size:12px;color:var(--muted)}
+main{flex:1;display:flex;overflow:hidden}
+/* 左：会话列表 */
+#side{width:320px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#newbar{padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
+#idea{width:100%;height:64px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:vertical;outline:none}
+#idea:focus{border-color:var(--primary)}
+#newbtn{padding:8px;border-radius:8px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+#newbtn:disabled{opacity:.5}
+#filters{display:flex;gap:4px;padding:8px 10px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.fbtn{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--border);cursor:pointer;color:var(--muted);background:#fff}
+.fbtn.on{background:var(--primary);color:#fff;border-color:var(--primary)}
+#list{flex:1;overflow-y:auto;padding:8px}
+.ses{border:1px solid var(--border);border-radius:10px;padding:8px 10px;margin-bottom:6px;cursor:pointer;background:#fff}
+.ses:hover{border-color:var(--primary)}
+.ses.sel{border-color:var(--primary);box-shadow:0 0 0 3px #f5f3ff}
+.ses .idea{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.ses .meta{font-size:11px;color:var(--muted);margin-top:3px;display:flex;gap:8px}
+.stt{font-size:10.5px;padding:1px 8px;border-radius:999px;border:1px solid}
+.stt.open{color:var(--primary);border-color:var(--primary)}
+.stt.awaiting{color:var(--warn);border-color:var(--warn)}
+.stt.go{color:var(--ok);border-color:var(--ok)}
+.stt.no-go,.stt.park{color:var(--muted)}
+/* 右：工作区 */
+#work{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#top{padding:10px 18px;background:var(--card);border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+#top .idea{font-weight:700;font-size:14px}
+#tabs{display:flex;gap:2px;padding:6px 18px;background:var(--card);border-bottom:1px solid var(--border)}
+.tb{font-size:12.5px;padding:5px 14px;cursor:pointer;color:var(--muted);border-radius:8px 8px 0 0}
+.tb.on{color:var(--primary);font-weight:700;box-shadow:inset 0 -2px var(--primary)}
+#pane{flex:1;overflow-y:auto;padding:14px 18px}
+.doc{font-size:13px;white-space:pre-wrap;line-height:1.8}
+.doc h1,.doc h2,.doc h3{margin:12px 0 4px}
+/* 决策点表 */
+.dt{width:100%;border-collapse:collapse;font-size:12.5px;margin:6px 0 14px;background:#fff}
+.dt th,.dt td{border:1px solid var(--border);padding:7px 10px;text-align:left;vertical-align:top}
+.dt th{background:#f5f3ff;color:var(--primary);font-size:12px}
+.opt{display:inline-block;margin:2px 4px 2px 0;padding:3px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;font-size:12px;background:#fff}
+.opt:hover{border-color:var(--primary)}
+.opt.pick{background:var(--primary);color:#fff;border-color:var(--primary)}
+.opt.rec::after{content:' ★推荐';color:var(--warn);font-size:10px}
+.opt.pick.rec::after{color:#fde68a}
+#replybar{border-top:1px solid var(--border);background:var(--card);padding:10px 18px;display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+#msg{width:100%;height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:none;outline:none}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#send{padding:7px 20px;border-radius:8px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+#send:disabled{opacity:.5}
+.gate{display:none;gap:8px}
+.gate .b{padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;border:1px solid}
+.b.go{background:#dcfce7;color:var(--ok);border-color:var(--ok)}
+.b.no{background:#fee2e2;color:var(--err);border-color:var(--err)}
+.b.pk{background:#f3f4f6;color:var(--muted);border-color:var(--border)}
+#matrow{display:flex;gap:6px;align-items:center}
+#matfn{width:160px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
+#matct{flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
+.mats{font-size:11px;color:var(--muted)}
+#events{max-height:110px;overflow-y:auto;font-family:var(--mono);font-size:10.5px;color:#9a9a9a;padding:4px 8px;background:#fafaf9;border-radius:6px;display:none}
+footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20px;font-size:11.5px;color:var(--muted);flex-shrink:0}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">💡 Idea <span>Plan</span> 分析台</div>
+  <div class="sub">分析到立项 · 人 reply 才跑一轮 · 磁盘唯一真源（逐轮只增不改）</div>
+</header>
+<main>
+  <div id="side">
+    <div id="newbar">
+      <textarea id="idea" placeholder="想法，例：给工厂做个并发流水线观测面板的预研分析…（会自动跑第 1 轮，并与近 10 条历史分析比对防重复立项）"></textarea>
+      <button id="newbtn">🌱 新建分析会话</button>
+    </div>
+    <div id="filters"></div>
+    <div id="list"><div style="font-size:12px;color:var(--muted);padding:6px">…</div></div>
+  </div>
+  <div id="work">
+    <div id="top"><span class="idea" id="tidea">选择或新建一个分析会话</span><span id="tstate"></span></div>
+    <div id="tabs">
+      <div class="tb on" data-t="round">📋 本轮决策点</div>
+      <div class="tb" data-t="IDEA">💡 IDEA</div>
+      <div class="tb" data-t="RESEARCH">🔬 RESEARCH</div>
+      <div class="tb" data-t="BRIEF">📦 BRIEF</div>
+      <div class="tb" data-t="rounds">🗂 全部轮次</div>
+    </div>
+    <div id="pane"><div style="color:var(--muted);font-size:13px">等待会话…</div></div>
+    <div id="replybar">
+      <div class="gate row" id="gate">
+        <b style="font-size:13px">已收敛 · 拍板：</b>
+        <button class="b go" onclick="decide('go')">🚀 GO · 下发工厂</button>
+        <button class="b no" onclick="decide('no-go')">❌ NO-GO · 归档</button>
+        <button class="b pk" onclick="decide('park')">🅿️ PARK · 搁置</button>
+        <span class="mats" id="spawninfo"></span>
+      </div>
+      <div class="row" id="replyrow">
+        <textarea id="msg" placeholder="拍板补充 / 追问 / 喂料后的说明（点选上方决策点选项后连同提交）"></textarea>
+        <div id="matrow">
+          <input id="matfn" placeholder="材料文件名.md"><input id="matct" placeholder="粘贴材料内容（可选，随 reply 入 materials/）">
+        </div>
+        <div class="row"><button id="send">📨 提交 reply（触发下一轮）</button><span class="mats" id="matlist"></span><span class="mats" id="hint"></span></div>
+      </div>
+      <div id="events"></div>
+    </div>
+  </div>
+</main>
+<footer>五态：open 分析中 · awaiting 待拍板 · go 已立项 · no-go/park 归档（可直接 reply 复活续轮）· 工厂下发走 /api/mission/from-plan</footer>
+<script>
+const $=id=>document.getElementById(id);
+const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let cur=null,tab='round',filter='all',pick={};
+const STN={open:'🟣 分析中',awaiting:'🟡 待拍板',go:'🟢 已立项',park:'⚪ 搁置','no-go':'⚪ 否决'};
+const FLOWS=[['all','全部'],['open','分析中'],['awaiting','待拍板'],['go','已立项'],['park','搁置'],['no-go','否决']];
+
+function renderFilters(){$('filters').innerHTML=FLOWS.map(([k,l])=>`<span class="fbtn ${filter===k?'on':''}" onclick="setF('${k}')">${l}</span>`).join('')}
+window.setF=k=>{filter=k;renderFilters();loadList()};
+async function loadList(){
+  const d=await(await fetch('/api/analyses')).json().catch(()=>({analyses:[]}));
+  const arr=(d.analyses||[]).filter(a=>filter==='all'||a.state===filter);
+  $('list').innerHTML=arr.length?arr.map(a=>`
+    <div class="ses ${cur===a.id?'sel':''}" onclick="selSes('${a.id}')">
+      <div class="idea">${esc(a.idea)}</div>
+      <div class="meta"><span class="stt ${a.state}">${STN[a.state]||a.state}</span><span>第 ${a.round} 轮</span><span>${(a.updated||'').slice(5,16).replace('T',' ')}</span></div>
+    </div>`).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
+}
+window.selSes=id=>{cur=id;pick={};loadList();loadDetail()};
+
+/* 决策点表解析：| # | 决策点 | 选项 | 推荐 | 依据 | */
+function parseTable(md){
+  const rows=[];
+  for(const line of (md||'').split('\n')){
+    const c=line.trim().replace(/^\|/,'').replace(/\|$/,'').split('|').map(s=>s.trim());
+    if(c.length>=5&&/^[D\d]/.test(c[0])&&!/^[-: ]+$/.test(c[1]))rows.push({id:c[0],q:c[1],opts:c[2].split(/[\/、,，]\s*/).filter(Boolean),rec:c[3],why:c[4]});
+  }
+  return rows;
+}
+function renderRound(d){
+  const n=d.meta.round,tag=String(n).padStart(3,'0');
+  const out=d.rounds['r'+tag+'-out.md']||'';
+  const inn=d.rounds['r'+tag+'-in.json']||'';
+  const conv=/(^|\n)\s*状态[:：]\s*收敛/.test(out);
+  let h=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">第 ${n} 轮 · ${conv?'<b style="color:var(--warn)">已收敛 — 请拍板</b>':'含待拍决策点'}${d.running?' · <b style="color:var(--primary)">⏳ Agent 分析中…</b>':''}</div>`;
+  if(inn)h+=`<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">本轮人的输入</summary><div class="doc" style="font-size:12px;color:#525252">${esc(inn)}</div></details>`;
+  const rows=parseTable(out);
+  if(rows.length){
+    h+='<table class="dt"><tr><th>#</th><th>决策点</th><th>选项（点击拍板）</th><th>推荐</th><th>依据</th></tr>';
+    for(const r of rows)h+=`<tr><td><b>${esc(r.id)}</b></td><td>${esc(r.q)}</td><td>${r.opts.map(o=>`<span class="opt ${pick[r.id]===o?'pick':''} ${o===r.rec?'rec':''}" onclick="pick['${r.id}']='${esc(o).replace(/'/g,"&#39;")}';loadDetail()">${esc(o)}</span>`).join('')}</td><td>${esc(r.rec)}</td><td>${esc(r.why)}</td></tr>`;
+    h+='</table>';
+  }
+  h+=`<div class="doc" style="font-size:12.5px;color:#404040;background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px">${mdHtml(out)||'（本轮暂无产物）'}</div>`;
+  return h;
+}
+function mdHtml(md){
+  let h=esc(md);
+  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>'<pre style="background:#f5f5f5;padding:8px;border-radius:6px;font-size:11px;overflow-x:auto">'+c+'</pre>');
+  h=h.replace(/^### (.*)$/gm,'<h3>$1</h3>').replace(/^## (.*)$/gm,'<h2>$1</h2>').replace(/^# (.*)$/gm,'<h1>$1</h1>');
+  h=h.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
+  h=h.replace(/^\s*[-*] (.*)$/gm,'<li>$1</li>');
+  h=h.replace(/\|(.+)\|/g,m=>m); // 表格行保留原文
+  return h.replace(/\n{2,}/g,'<br><br>');
+}
+async function loadDetail(){
+  if(!cur){return}
+  const d=await(await fetch('/api/analyses/'+cur)).json().catch(()=>null);
+  if(!d||d.error){$('pane').innerHTML='<div style="color:var(--err)">加载失败</div>';return}
+  $('tidea').textContent=d.meta.idea.slice(0,60);
+  $('tstate').innerHTML=`<span class="stt ${d.meta.state}">${STN[d.meta.state]||d.meta.state}</span> · 第 ${d.meta.round} 轮`;
+  if(tab==='round')$('pane').innerHTML=renderRound(d);
+  else if(tab==='rounds'){
+    let h='';for(const[f,c]of Object.entries(d.rounds))h+=`<details style="margin-bottom:8px"><summary style="font-family:var(--mono);font-size:12px;cursor:pointer">rounds/${esc(f)}</summary><div class="doc" style="font-size:12px">${esc(c).slice(0,4000)}</div></details>`;
+    $('pane').innerHTML=h||'（无轮次）';
+  }else{
+    const c=d.docs[tab];
+    $('pane').innerHTML=`<div class="doc">${mdHtml(c)||'（'+tab+'.md 尚未生成）'}</div>`;
+  }
+  $('gate').style.display=d.meta.state==='awaiting'?'flex':'none';
+  $('spawninfo').textContent=d.meta.spawnedRun?('已下发工厂 run：'+d.meta.spawnedRun):'';
+  $('matlist').textContent=(d.materials||[]).length?('📎 materials/: '+(d.materials||[]).join(', ')):'';
+  $('hint').textContent=d.running?'本轮分析中（reply 会 409）':(['no-go','park'].includes(d.meta.state)?'归档会话：reply 即复活续轮':'');
+}
+document.querySelectorAll('.tb').forEach(t=>t.onclick=()=>{
+  tab=t.dataset.t;document.querySelectorAll('.tb').forEach(x=>x.classList.toggle('on',x===t));loadDetail()});
+
+/* 新建 */
+$('newbtn').onclick=async()=>{
+  const idea=$('idea').value.trim();if(idea.length<5){alert('想法太短（≥5 字）');return}
+  $('newbtn').disabled=true;
+  const r=await(await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})})).json().catch(()=>({}));
+  $('newbtn').disabled=false;
+  if(r.id){$('idea').value='';cur=r.id;pick={};loadList();loadDetail()}
+};
+/* reply */
+$('send').onclick=async()=>{
+  if(!cur)return;
+  const msg=$('msg').value.trim();
+  const fn=$('matfn').value.trim(),ct=$('matct').value;
+  const b={answers:pick,message:msg};
+  if(fn&&ct)b.materials=[{filename:fn,content:ct}];
+  const r=await fetch('/api/analyses/'+cur+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+  if(r.status===409){alert('本轮分析进行中，稍候');return}
+  if(r.status===400){const e=await r.json();alert('材料非法：'+e.error);return}
+  if(r.status===422){alert('reply 需 answers 或 message');return}
+  $('msg').value='';$('matfn').value='';$('matct').value='';pick={};
+  loadDetail();loadList();
+};
+window.decide=async d=>{
+  if(!confirm(d==='go'?'确认 GO：将尝试下发工厂立项（并发满则标记 go 待重下发）？':'确认 '+d.toUpperCase()+'：会话归档（产物保留，可复活）？'))return;
+  const r=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:d})})).json();
+  if(d==='go'&&r.spawnedRun===null)$('spawninfo').textContent='⚠️ 工厂暂不可达，已标记 go——可稍后从工厂 from-plan 重下发';
+  loadDetail();loadList();
+};
+renderFilters();loadList();
+setInterval(()=>{loadList();if(cur)loadDetail()},6000);
+</script>
+</body>
+</html>
