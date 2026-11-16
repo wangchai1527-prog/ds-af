@@ -91,6 +91,7 @@
   - ④数据源：轮询 `/api/state` 聚合视图 + `/api/runs` 历史列表合并展示（active 置顶）。
   - ⑤进度可读性硬要求：每个在跑任务在**不开详情**的情况下就能看到「当前节点 / 已运行多久 / 最近动作」三要素——后台任务对人的状态透明是本轮用户强令，不是可选美化；workbench Engineering 卡同步显示各 active run 的节点进度条。
 - Consumes: 现有 persist()/nodes.json（每 run 独立目录天然隔离，无需改）。
+- 用户增补（2026-11-16）：右侧「📦 产物」面板**必须保留**，且要显示**实际路径的真实文件目录结构**（llmwiki/PRD.md、runtime/js/model.js 等真实相对路径，按目录分层）——看板化不得削弱产物可见性。
 - 语义变更记录：`/api/mission` 的 409 从「factory busy」变为「并发已满」；单 run 内仍是串行节点流水线（本 Task 不做节点级并行）。
 
 **Flow:**

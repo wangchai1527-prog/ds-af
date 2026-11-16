@@ -2,30 +2,51 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Engineering Factory v2 · 节点管理制</title>
+<title>Engineering Factory v2.1 · 并发看板</title>
 <style>
 :root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-header{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;gap:10px;align-items:center;flex-shrink:0;flex-wrap:wrap}
 .logo{font-weight:700}.logo span{color:var(--primary)}
 .badge{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);color:var(--muted)}
 .badge.live{color:var(--ok);border-color:var(--ok)}
-.badge.blocked{color:var(--err);border-color:var(--err)}
-main{flex:1;display:grid;grid-template-columns:1fr 350px;overflow:hidden}
+.badge.pool{color:var(--primary);border-color:var(--primary);font-weight:700}
+#counts{display:flex;gap:6px;font-size:12px}
+#counts b{font-family:var(--mono)}
+main{flex:1;display:grid;grid-template-columns:1fr 360px;overflow:hidden}
 #left{display:flex;flex-direction:column;overflow:hidden}
-/* 节点轨道 */
-#nodes{background:var(--card);border-bottom:1px solid var(--border);padding:12px 18px;display:flex;gap:8px;overflow-x:auto;flex-shrink:0}
-.node{min-width:150px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:12px;background:#fff;flex-shrink:0}
-.node .t{font-weight:700;display:flex;align-items:center;gap:6px}
-.node .o{color:var(--muted);font-size:11px;margin-top:2px}
-.node.pending{opacity:.5}
-.node.running{border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff}
-.node.running .t{color:var(--primary)}
-.node.done{border-color:var(--ok);background:#f0fdf4}
-.node.blocked{border:2px solid var(--err);background:#fef2f2}
-.node .chk{font-size:10.5px;font-family:var(--mono);margin-top:4px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#flow{flex:1;overflow-y:auto;padding:14px 20px;display:flex;flex-direction:column;gap:6px}
+#inputbar{padding:10px 20px;background:var(--card);border-bottom:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
+#inp{flex:1;padding:9px 14px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none}
+#inp:focus{border-color:var(--primary)}
+#send{padding:9px 22px;border-radius:10px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+#send:disabled{opacity:.5;cursor:wait}
+/* 泳道 */
+#lanes{flex:0 0 auto;overflow-y:auto;max-height:46%;padding:10px 20px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
+.lane{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:8px 12px;cursor:pointer}
+.lane:hover{border-color:var(--primary)}
+.lane.sel{border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff}
+.lane .hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lane .idea{font-size:12.5px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px}
+.lane .meta{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.lane .chips{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.chipN{font-size:10.5px;font-family:var(--mono);border:1px solid var(--border);border-radius:6px;padding:1px 7px;color:var(--muted);background:#fff}
+.chipN.done{border-color:#86efac;color:var(--ok)}
+.chipN.running{border-color:var(--primary);color:var(--primary);font-weight:700}
+.chipN.blocked{border-color:var(--err);color:var(--err);font-weight:700}
+.st{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid}
+.st.run{color:var(--primary);border-color:var(--primary)}
+.st.blk{color:var(--err);border-color:var(--err)}
+.st.ok{color:var(--ok);border-color:var(--ok)}
+.st.pau{color:var(--muted)}
+/* 详情 */
+#detail{flex:1;overflow:hidden;display:flex;flex-direction:column;border-top:1px solid var(--border)}
+#dhead{padding:8px 20px;background:var(--card);border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex-shrink:0}
+#dhead .t{font-weight:700;font-size:13px}
+.mbtn{font-size:12px;padding:4px 12px;border-radius:7px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.mbtn:hover{background:#f5f7fa}
+.mbtn.danger{border-color:var(--err);color:var(--err)}
+#flow{flex:1;overflow-y:auto;padding:10px 20px;display:flex;flex-direction:column;gap:6px}
 .ev{display:flex;gap:10px;align-items:flex-start;animation:in .25s}
 @keyframes in{from{opacity:0;transform:translateY(5px)}}
 .ev .tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;flex-shrink:0;min-width:58px;text-align:center}
@@ -36,226 +57,235 @@ main{flex:1;display:grid;grid-template-columns:1fr 350px;overflow:hidden}
 .ev.stage-ev .body{font-family:inherit;font-weight:600;font-size:13px}
 .ev.check-ev .body{font-family:var(--mono);font-size:12px}
 .ev.block-ev .body{color:var(--err);font-family:inherit;font-weight:700}
-.mbtn{font-size:12px;padding:5px 12px;border-radius:7px;border:1px solid var(--border);background:#fff;cursor:pointer}
-.mbtn:hover{background:#f5f7fa}
-#retrybar{display:none;padding:10px 20px;background:#fef2f2;border-top:1px solid var(--err);flex-shrink:0;align-items:center;gap:12px}
-#retryBtn{padding:8px 20px;border-radius:8px;border:0;background:var(--err);color:#fff;font-weight:600;cursor:pointer}
-#inputbar{padding:14px 20px;background:var(--card);border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
-#inp{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none}
-#inp:focus{border-color:var(--primary)}
-#send{padding:10px 22px;border-radius:10px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
-#send:disabled{opacity:.5;cursor:wait}
-#previewBtn{display:none;padding:10px 16px;border-radius:10px;border:1px solid var(--ok);background:#f0fdf4;color:var(--ok);font-weight:600;cursor:pointer}
+/* 项目管理面板 */
+#projPanel{display:none;flex:1;overflow-y:auto;padding:14px 20px}
+/* 右侧产物 */
 #right{background:var(--card);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
 #right h3{font-size:12px;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--border)}
-#arts{flex:1;overflow-y:auto;padding:10px 14px}
-.art{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:6px;background:#f9fafb;margin-bottom:5px;cursor:pointer;color:#525252}
+#arts{flex:1;overflow-y:auto;padding:8px 12px}
+.art{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:12px;padding:4px 8px;border-radius:6px;background:#f9fafb;margin-bottom:3px;cursor:pointer;color:#525252}
 .art:hover{background:#eff6ff;color:var(--primary)}
-.art .doc{color:var(--primary);font-weight:700}
+.art .doc{color:var(--primary);font-weight:600}
+.art .sz{color:#a3a3a3;font-size:10.5px}
+.art.isdir{background:#f3f4f6;cursor:default;font-weight:600}
 #fileview{max-height:42%;overflow-y:auto;border-top:1px solid var(--border);padding:10px 14px;font-family:var(--mono);font-size:11px;white-space:pre-wrap;color:#404040;background:#fcfcfc;line-height:1.7}
-footer{background:var(--card);border-top:1px solid var(--border);padding:6px 20px;font-size:12px;color:var(--muted);flex-shrink:0}
+footer{background:var(--card);border-top:1px solid var(--border);padding:5px 20px;font-size:12px;color:var(--muted);flex-shrink:0}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">🏭 Engineering <span>Factory</span> v2 · 节点管理制</div>
-  <span class="badge live">● 按研发流程节点跟进 · 验收不过即停</span>
-  <span class="badge" id="stBadge">待命</span>
+  <div class="logo">🏭 Engineering <span>Factory</span> v2.1 · 并发执行制</div>
+  <span class="badge pool" id="poolBadge">并发 0/3</span>
+  <div id="counts"></div>
   <div style="flex:1"></div>
-  <span class="badge">进入条件 → 执行 → 验收判据 → 放行/阻断</span>
+  <div class="ptab on" id="tabRun" style="padding:6px 14px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)">▶ 并发看板</div>
+  <div class="ptab" id="tabProj" style="padding:6px 14px;font-size:13px;cursor:pointer;color:var(--muted)">🗂 项目管理</div>
 </header>
 <main>
   <div id="left">
-    <div style="display:flex;gap:0;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0">
-      <div class="ptab on" id="tabRun" style="padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)">▶ 当前任务</div>
-      <div class="ptab" id="tabProj" style="padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)">🗂 项目管理</div>
-    </div>
-    <div id="projPanel" style="display:none;flex:1;overflow-y:auto;padding:14px 18px">
-      <div style="font-size:12px;color:var(--muted);margin-bottom:10px">已立项项目 · 查看 / 迭代（增改）/ 回滚（撤）/ 删除</div>
-      <div id="runlist"></div>
-    </div>
-    <div id="runPanel" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
-    <div id="nodes"><div style="font-size:12px;color:var(--muted);padding:8px 4px">立项后按节点跟进…</div></div>
-    <div id="flow"><div class="ev"><span class="tag stage">START</span><div class="body">输入产品想法立项 → 工厂按 7 个管理节点推进：每个节点有负责人/交付物/验收判据，验收不过流水线即停（⛔），人工重试后才能继续 —— 防止跑偏。</div></div></div>
-    <div id="retrybar">⛔ <span id="retryMsg" style="font-size:13px;color:var(--err)"></span><button id="retryBtn">👤 重试被阻断节点</button></div>
-    </div>
     <div id="inputbar">
-      <input id="inp" placeholder="产品想法，例：做一个记账小应用，支持分类统计和月度报表…" autocomplete="off">
+      <input id="inp" placeholder="产品想法，例：做一个记账小应用，支持分类统计和月度报表…（多个任务可并行跑）" autocomplete="off">
       <button id="send">🚀 立项开工</button>
-      <button id="previewBtn" onclick="window.open('/preview/index.html','_blank')">👁 预览产品</button>
     </div>
+    <div id="lanes"><div style="font-size:12px;color:var(--muted)">暂无在管 run —— 输入想法开工，或等待历史 run 恢复</div></div>
+    <div id="detail">
+      <div id="dhead"><span class="t" id="dtitle">选择一条泳道查看详情</span><div style="flex:1"></div><span id="dops"></span></div>
+      <div id="flow"><div class="ev"><span class="tag stage">START</span><div class="body">并发模型：多个任务并行推进，互不排队；单任务内部仍是节点串行流水线，验收不过即停（⛔）。</div></div></div>
+    </div>
+    <div id="projPanel"><div id="runlist"></div></div>
   </div>
   <div id="right">
-    <h3>📦 产物（实时生成 · 点击查看）</h3>
-    <div id="arts"></div>
+    <h3>📦 产物（实际路径 · 点击查看 / 预览）</h3>
+    <div id="arts"><div style="font-size:12px;color:var(--muted)">…</div></div>
     <div id="fileview">…</div>
   </div>
 </main>
-<footer>节点状态持久化(nodes.json) · 刷新/重启不丢进度 · 验收判据磁盘实测，不信 Agent 自报</footer>
+<footer>多 run 并发（MAX_CONCURRENT 可配）· 节点状态持久化(nodes.json) · 验收判据磁盘实测，不信 Agent 自报</footer>
 <script>
 const $=id=>document.getElementById(id);
-const ICON={pending:'⏳',running:'▶️',done:'✅',blocked:'⛔'};
+const ICON={pending:'○',running:'⏳',done:'✅',blocked:'⛔',paused:'⏸'};
 const TAG={Read:['read','📋'],Write:['write','✍️'],Edit:['write','✍️'],Bash:['run','▶️']};
-let busy=false;
-function renderNodes(nodes){
-  if(!nodes||!nodes.length)return;
-  $('nodes').innerHTML=nodes.map(n=>`<div class="node ${n.status}">
-    <div class="t">${ICON[n.status]} ${n.name}</div>
-    <div class="o">${n.owner} · 交付:${n.deliverable}</div>
-    <div class="chk" title="${(n.acceptDetail||('进入:'+n.entry)).replace(/"/g,'')}">${n.acceptDetail||('进入:'+n.entry)}</div>
-  </div>`).join('');
+let sel=null,selEvents=0,state=null;
+const fmtMs=ms=>ms==null?'':(ms<60000?Math.round(ms/1000)+'s':Math.floor(ms/60000)+'m'+Math.round(ms%60000/1000)+'s');
+const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ===== 看板渲染 ===== */
+function renderLanes(runs){
+  if(!runs||!runs.length){$('lanes').innerHTML='<div style="font-size:12px;color:var(--muted)">暂无在管 run —— 输入想法开工</div>';return}
+  $('lanes').innerHTML=runs.map(r=>{
+    const st=r.executing?'<span class="st run">▶ 执行中</span>':r.blocked?'<span class="st blk">⛔ 阻断</span>':r.done?'<span class="st ok">✅ 交付</span>':'<span class="st pau">⏸ 暂停</span>';
+    const chips=r.nodes.map((s,i)=>`<span class="chipN ${s}">${ICON[s]||s} ${NODE_NAMES[r.flow]?(NODE_NAMES[r.flow][i]||s):s}</span>`).join('');
+    const la=r.lastAction?`<span class="meta" title="${esc(r.lastAction.text)}">最近: ${esc((r.lastAction.text||'').slice(0,42))}</span>`:'';
+    return `<div class="lane ${sel===r.id?'sel':''}" data-id="${r.id}" onclick="selectRun('${r.id}')">
+      <div class="hd">${st}<span class="idea" title="${esc(r.idea)}">${esc(r.idea.slice(0,60))}</span>
+        <span class="meta">节点: ${esc(r.currentNode)}</span>
+        <span class="meta">${r.nodeElapsedMs?'⏱ '+fmtMs(r.nodeElapsedMs):''}</span>${la}</div>
+      <div class="chips">${chips}</div></div>`}).join('');
+}
+const NODE_NAMES={build:['立项','PRD','原型','方案','拆解','开发','QA','交付'],fix:['工单','勘察','根因','修复','回归','交付'],iterate:['迭代','PRD','拆解','开发','QA','交付']};
+function renderCounts(runs,conc){
+  if(conc)$('poolBadge').textContent=`并发 ${conc.executing}/${conc.max}`;
+  const c={exec:0,pau:0,blk:0,done:0};
+  (runs||[]).forEach(r=>{r.executing?c.exec++:r.blocked?c.blk++:r.done?c.done++:c.pau++});
+  $('counts').innerHTML=`<span>🟢 执行 <b>${c.exec}</b></span><span>⏸ 暂停 <b>${c.pau}</b></span><span>⛔ 阻断 <b>${c.blk}</b></span><span>✅ 交付 <b>${c.done}</b></span>`;
 }
 function addEv(tag,cls,text,extra){
-  const d=document.createElement('div');d.className='ev '+extra;
+  const d=document.createElement('div');d.className='ev '+(extra||'');
   d.innerHTML=`<span class="tag ${cls}">${tag}</span>`;const b=document.createElement('div');b.className='body';b.textContent=text;d.appendChild(b);
   $('flow').appendChild(d);$('flow').scrollTop=1e9;
 }
+function opsFor(run){
+  if(!run)return'';
+  let h='';
+  if(run.nodes.some(n=>n.status==='blocked')&&!run.executing)h+=`<button class="mbtn" onclick="retryRun('${run.id}')">👤 重试阻断节点</button> `;
+  if(!run.executing)h+=`<button class="mbtn danger" onclick="delRun('${run.id}')">🗑 删除</button> `;
+  const idx=run.artifacts&&run.artifacts.some(a=>/\.html$/.test(a.name)&&a.type!=='dir');
+  if(idx)h+=`<button class="mbtn" onclick="window.open('/preview/${run.id}/index.html','_blank')">👁 预览</button>`;
+  return h;
+}
+function renderDetail(run){
+  if(!run){$('dtitle').textContent='选择一条泳道查看详情';$('dops').innerHTML='';return}
+  $('dtitle').textContent=run.idea.slice(0,44)+(run.idea.length>44?'…':'');
+  $('dops').innerHTML=opsFor(run);
+  const evs=run.events||[];
+  if(evs.length!==selEvents){ // 事件流增量渲染
+    if(evs.length<selEvents){$('flow').innerHTML='';selEvents=0}
+    for(const e of evs.slice(selEvents)){
+      if(e.type==='flow')addEv('路由','stage',e.text,'stage-ev');
+      else if(e.type==='node_start')addEv('节点','stage',`${e.owner} 开始「${e.name||e.node}」（交付：${e.deliverable||'—'}）`,'stage-ev');
+      else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
+      else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+(e.deliverable||'')+' — '+e.detail,'check-ev');
+      else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
+      else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
+      else if(e.type==='text')addEv('💬','think',e.text);
+      else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
+    }
+    selEvents=evs.length;
+  }
+  renderArts(run.artifacts,run.id);
+}
+/* ===== 产物（实际路径树） ===== */
 function kindOf(name,type){
   if(type==='dir')return['📁','目录'];
-  if(name.endsWith('PRD.md'))return['📋','产品需求'];
-  if(name.endsWith('TechSpec.md'))return['📐','技术方案'];
-  if(name.endsWith('DIAGNOSIS.md'))return['🔍','根因诊断'];
-  if(name.endsWith('SURVEY.md'))return['🧭','现场勘察'];
-  if(name.endsWith('QA-Report.md'))return['✅','验收报告'];
-  if(name.endsWith('DELIVERY.md'))return['📦','交付说明'];
-  if(name.endsWith('manifest.json'))return['🪪','运行身份'];
-  if(name.endsWith('events.jsonl'))return['🔁','过程记录'];
+  if(name.endsWith('PRD.md'))return['📋','产品需求'];if(name.endsWith('TechSpec.md'))return['📐','技术方案'];
+  if(name.endsWith('DIAGNOSIS.md'))return['🔍','根因诊断'];if(name.endsWith('SURVEY.md'))return['🧭','现场勘察'];
+  if(name.endsWith('QA-Report.md'))return['✅','验收报告'];if(name.endsWith('DELIVERY.md'))return['📦','交付说明'];
+  if(name.endsWith('manifest.json'))return['🪪','运行身份'];if(name.endsWith('events.jsonl'))return['🔁','过程记录'];
   if(name.endsWith('.md'))return['📄','文档'];
-  if(name.endsWith('.html'))return name.includes('prototype')?['🎨','交互原型 · 可点击预览']:['🌐','产品页面 · 可点击预览'];
+  if(name.endsWith('.html'))return name.includes('prototype')?['🎨','交互原型 · 可预览']:['🌐','产品页面 · 可预览'];
   if(name.endsWith('.json'))return['🗂','任务合同'];
   if(/\.(js|mjs|css)$/.test(name))return['⌨️','代码'];
   return['📎','文件'];
 }
+function renderArts(arts,runId){
+  arts=arts||[];
+  if(!arts.length){$('arts').innerHTML='<div style="font-size:12px;color:var(--muted)">（暂无产物）</div>';return}
+  // 按真实路径分层缩进：llmwiki/PRD.md → 一级目录行 + 二级文件行
+  let h='';
+  for(const a of arts){
+    const depth=a.name.split('/').length-1;
+    const[ico,kind]=kindOf(a.name,a.type);
+    const nm=a.name.split('/').pop();
+    if(a.type==='dir')h+=`<div class="art isdir" style="padding-left:${8+depth*14}px">${ico} ${esc(nm)}/</div>`;
+    else h+=`<div class="art" data-n="${esc(a.name)}" data-run="${runId}" style="padding-left:${8+depth*14}px" title="${esc(a.name)}（${kind}）">
+      <span class="doc">${ico} ${esc(nm)}</span><span class="sz">${esc(a.name.split('/').slice(0,-1).join('/'))}${a.size!=='dir'?' · '+a.size:''}</span></div>`;
+  }
+  $('arts').innerHTML=h;
+  document.querySelectorAll('.art[data-n]').forEach(e=>e.onclick=async()=>{
+    const n=e.dataset.n,rid=e.dataset.run;
+    if(n.endsWith('.html')){window.open('/preview/'+rid+'/'+encodeURIComponent(n),'_blank');return}
+    try{
+      $('fileview').innerHTML='加载中…';
+      const c=await(await fetch('/api/file?name='+encodeURIComponent(n)+'&id='+rid)).json();
+      if(n.endsWith('.md'))$('fileview').innerHTML='<div style="font-size:11px;color:#a3a3a3;margin-bottom:6px">📄 '+esc(n)+'</div>'+mdToHtml(c.content||'(空)');
+      else if(n.endsWith('.jsonl'))$('fileview').textContent=(c.content||'').split('\n').slice(-30).join('\n');
+      else $('fileview').textContent=c.content||'(空)';
+    }catch(_){$('fileview').textContent='(不可读)'}
+  });
+}
 function mdToHtml(md){
-  const esc=t=>t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  let h=esc(md);
+  const escT=t=>t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  let h=escT(md);
   h=h.replace(/```([\s\S]*?)```/g,(m,c)=>'<pre style="background:#f5f5f5;border:1px solid #e5e5e5;border-radius:6px;padding:8px;overflow-x:auto;font-size:11px">'+c+'</pre>');
   h=h.replace(/^###### (.*)$/gm,'<h6>$1</h6>').replace(/^##### (.*)$/gm,'<h5>$1</h5>')
      .replace(/^#### (.*)$/gm,'<h4 style="margin:10px 0 4px">$1</h4>').replace(/^### (.*)$/gm,'<h3 style="margin:12px 0 4px">$1</h3>')
      .replace(/^## (.*)$/gm,'<h2 style="margin:14px 0 6px;font-size:15px">$1</h2>').replace(/^# (.*)$/gm,'<h1 style="margin:14px 0 8px;font-size:17px">$1</h1>');
   h=h.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/^\s*[-*] (.*)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g,'<ul style="margin:4px 0 4px 16px">$1</ul>');
-  h=h.replace(/^\|(.+)\|$/gm,m=>{const cells=m.slice(1,-1).split('|');return '<tr>'+cells.map(c=>'<td style="border:1px solid #e5e5e5;padding:3px 8px;font-size:11.5px">'+c.trim()+'</td>').join('')+'</tr>'});
-  h=h.replace(/(<tr>[\s\S]*?<\/tr>)(?!\s*<tr>)/g,'<table style="border-collapse:collapse;margin:8px 0">$1</table>');
   return h.replace(/\n{2,}/g,'<br><br>');
 }
-function renderArts(arts){
-  $('arts').innerHTML=(arts||[]).map(a=>{
-    const[ico,kind]=kindOf(a.name,a.type);
-    const isHtml=a.name.endsWith('.html');
-    return `<div class="art" data-n="${a.name}" data-html="${isHtml?1:0}" title="${kind}">
-      <span class="doc">${ico} ${a.name.split('/').pop()}</span>
-      <span style="color:#a3a3a3;font-size:11px">${kind}${a.size!=='dir'?' · '+a.size:''}${isHtml?' →':''}</span></div>`;
-  }).join('')||'<div style="font-size:12px;color:var(--muted)">…</div>';
-  document.querySelectorAll('.art').forEach(e=>e.onclick=async()=>{
-    const n=e.dataset.n;
-    if(e.dataset.html==='1'){window.open('/preview/'+encodeURIComponent(n),'_blank');return}
-    try{
-      $('fileview').innerHTML='加载中…';
-      const c=await(await fetch('/api/file?name='+encodeURIComponent(n))).json();
-      if(n.endsWith('.md')){$('fileview').innerHTML='<div style="font-size:11px;color:#a3a3a3;margin-bottom:6px">📄 '+n+'（渲染视图）</div>'+mdToHtml(c.content||'(空)')}
-      else if(n.endsWith('.jsonl')){$('fileview').textContent=(c.content||'').split('\n').slice(-30).join('\n')}
-      else{$('fileview').textContent=c.content||'(空)'}
-    }catch(_){$('fileview').textContent='(不可读)'}
-  });
+/* ===== 轮询主循环 ===== */
+async function tick(){
+  try{
+    const d=await(await fetch('/api/state')).json();
+    state=d;
+    renderCounts(d.runs,d.concurrency);
+    renderLanes(d.runs);
+    if(!sel&&d.run)selectRun(d.run.id,true);
+    else if(sel){
+      if(d.run&&d.run.id===sel)renderDetail(d.run);
+      else{const r=await fetch('/api/state?id='+encodeURIComponent(sel)).then(r=>r.json()).catch(()=>null);
+        if(r&&r.run)renderDetail(r.run);else if(r&&r.error){sel=null;selEvents=0;$('flow').innerHTML='';}}
+    }
+  }catch(e){}
 }
-function ui(r){
-  renderNodes(r.nodes);renderArts(r.artifacts);
-  const blk=r.nodes&&r.nodes.find(n=>n.status==='blocked');
-  $('retrybar').style.display=blk?'flex':'none';
-  if(blk){$('retryMsg').textContent=`节点「${blk.name}」验收未过：${blk.acceptDetail||''}`;$('stBadge').textContent='⛔ 阻断：'+blk.name;$('stBadge').className='badge blocked'}
-  else if(r.done){$('stBadge').textContent='✅ 全部节点通过';$('stBadge').className='badge live';$('previewBtn').style.display=''}
-  else if(r.stage){$('stBadge').textContent='执行中：'+r.stage;$('stBadge').className='badge'}
-}
-$('send').onclick=go;$('inp').onkeydown=e=>{if(e.key==='Enter')go()};
-$('retryBtn').onclick=async()=>{
-  $('retrybar').style.display='none';$('flow').innerHTML='';
-  stream(fetch('/api/retry',{method:'POST'}));
+window.selectRun=(id,silent)=>{sel=id;selEvents=0;$('flow').innerHTML='';document.querySelectorAll('.lane').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));tick()};
+setInterval(tick,4000);tick();
+/* ===== 操作 ===== */
+window.retryRun=async id=>{
+  const r=await fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('重试','stage','⛔ '+(e.error||'失败'),'block-ev');return}
+  addEv('重试','stage','👤 已触发重试','stage-ev');tick();
+};
+window.delRun=async id=>{
+  if(!confirm('彻底删除 '+id+'（含代码与证据，不可恢复）？'))return;
+  const r=await(await fetch('/api/runs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  if(r.ok&&sel===id){sel=null;selEvents=0;$('flow').innerHTML='';}
+  tick();
 };
 async function go(){
-  const idea=$('inp').value.trim();if(!idea||busy)return;
-  busy=true;$('send').disabled=true;$('send').textContent='⏳ 生产中…';
-  $('inp').value='';$('flow').innerHTML='';$('previewBtn').style.display='none';
-  stream(fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})}));
-}
-async function stream(fp){
-  busy=true;
+  const idea=$('inp').value.trim();if(!idea)return;
+  $('inp').value='';$('send').disabled=true;$('send').textContent='⏳ 提交中…';
   try{
-    const r=await fp;
-    if(r.status===422){const e=await r.json();addEv('拒收','stage','⛔ '+e.error,'block-ev');busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';return}
-    if(r.status===409){
-      addEv('占用','stage','⏳ 工厂正在执行上一个任务，新任务未受理 —— 下方加载当前任务实时进度','block-ev');
-      const s=await state();
-      if(s&&s.idea){
-        renderNodes(s.nodes);renderArts(s.artifacts);
-        addEv('当前','stage','📋 '+s.idea,'stage-ev');
-        (s.events||[]).forEach(e=>{
-          if(e.type==='flow')addEv('路由','stage',e.text,'stage-ev');
-          else if(e.type==='node_start')addEv('节点','stage',(e.owner||'')+' 开始「'+(e.name||e.node)+'」（交付：'+(e.deliverable||'—')+'）','stage-ev');
-          else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
-          else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+(e.deliverable||'')+' — '+e.detail,'check-ev');
-          else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
-          else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
-          else if(e.type==='text')addEv('💬','think',e.text);
-          else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
-        });
-        addEv('提示','stage','⏳ 轮询该任务进度（每 5s 刷新尾部）… 刷新页面可看全量','stage-ev');
-        const t=setInterval(async()=>{const s2=await state();if(!s2||!s2.idea){clearInterval(t);return}
-          renderNodes(s2.nodes);renderArts(s2.artifacts);if(s2.done){clearInterval(t);ui(s2);addEv('完成','stage','✅ 当前任务已交付，可提交新任务','stage-ev')}},5000);
-      }
-      busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';return;
-    }
-    const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
-    while(true){
-      const{done,value}=await reader.read();if(done)break;
-      buf+=dec.decode(value,{stream:true});let i;
-      while((i=buf.indexOf('\n'))>=0){
-        const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;
-        let e;try{e=JSON.parse(line)}catch{continue}
-        if(e.type==='flow')addEv('路由','stage',e.text,'stage-ev');
-        else if(e.type==='node_start')addEv('节点','stage',`${e.owner} 开始「${e.name||e.node}」（交付：${e.deliverable||'—'}）`,'stage-ev');
-        else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
-        else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+`${e.deliverable} — ${e.detail}`,'check-ev');
-        else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
-        else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
-        else if(e.type==='text')addEv('💬','think',e.text);
-        else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
-        if(['node_start','node_check','pipeline_blocked','all_done'].includes(e.type)){const s=await state();ui(s)}
-      }
+    const r=await fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})});
+    if(r.status===422){const e=await r.json();addEv('拒收','stage','⛔ '+e.error,'block-ev')}
+    else if(r.status===409){const e=await r.json();addEv('并发满','stage','⛔ '+e.error+' — 稍后再提交或调 MAX_CONCURRENT','block-ev')}
+    else if(r.status===200){addEv('受理','stage','🟢 任务已受理，看板将出现新泳道','stage-ev');
+      // 轻量读取流首行拿 runId 并立即选中
+      const reader=r.body.getReader(),dec=new TextDecoder();const{value}=await reader.read();
+      try{await reader.cancel()}catch(e){}
+      tick();
     }
   }catch(err){addEv('ERROR','stage',''+err,'block-ev')}
-  busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';
-  ui(await state());
+  $('send').disabled=false;$('send').textContent='🚀 立项开工';
 }
-async function state(){try{return (await(await fetch('/api/state')).json()).run||{}}catch(_){return{}}}
-/* ===== 项目管理 CRUD ===== */
+$('send').onclick=go;$('inp').onkeydown=e=>{if(e.key==='Enter')go()};
+/* ===== 项目管理 ===== */
 const FLOWN={build:'🟢 立项开发',fix:'🔧 运维修复',iterate:'🔁 迭代开发'};
 const STN={delivered:'✅ 已交付',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
 async function loadRuns(){
   try{
     const d=await(await fetch('/api/projects')).json();
-    const runsWithoutProj=(await(await fetch('/api/runs')).json()).runs.filter(r=>!(d.projects||[]).some(p=>p.runs&&p.runs.includes(r.id)));
-    $('runlist').innerHTML=
+    const all=(await(await fetch('/api/runs')).json()).runs;
+    const runsWithoutProj=all.filter(r=>!(d.projects||[]).some(p=>p.runs&&p.runs.includes(r.id)));
+    $('runlist').innerHTML='<div style="font-size:12px;color:var(--muted);margin-bottom:10px">已立项项目 · 迭代 / 回滚 / 删除</div>'+
     (d.projects||[]).map(p=>`
       <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:#fff">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <b>🗂 ${p.id}</b><span style="font-size:13px">${p.name}</span>
-          <span style="font-size:11px;color:var(--muted)">📊 ${p.runs.length} 个任务</span>
-        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>🗂 ${p.id}</b><span style="font-size:13px">${p.name}</span>
+          <span style="font-size:11px;color:var(--muted)">📊 ${(p.runs||[]).length} 个任务</span></div>
         <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
         ${(p.runs||[]).map(r=>`
           <div style="display:flex;align-items:center;gap:8px;border-left:3px solid ${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--border)'};padding:4px 10px;background:#fafafa;border-radius:6px;flex-wrap:wrap">
             <span style="font-family:var(--mono);font-size:11.5px">${r.id}</span>
             <span style="font-size:11px;color:var(--muted)">${FLOWN[r.flow]||r.flow}</span>
             <span style="font-size:11px;color:${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
-            <span style="font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(r.idea||'').slice(0,40)}</span>
+            <span style="font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((r.idea||'').slice(0,40))}</span>
             ${r.flow==='build'&&r.status==='delivered'?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁迭代</button>
             <button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="rbRun('${r.id}')">↩️回滚</button>`:''}
             <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑删任务</button>
           </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">（无任务记录）</div>'}
         </div>
         <div style="margin-top:10px;display:flex;gap:8px">
-          <button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="viewRun('${(p.runs||[])[0]||''}')">📂 查看</button>
-          <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delProj('${p.id}',${p.runs.length})">🗑 删除整个项目（${p.runs.length} 任务+产品代码全部清零）</button>
+          <button class="mbtn danger" onclick="delProj('${p.id}',${(p.runs||[]).length})">🗑 删除整个项目（${(p.runs||[]).length} 任务+产品代码全部清零）</button>
         </div>
       </div>`).join('')
     +runsWithoutProj.map(r=>`
@@ -266,39 +296,31 @@ async function loadRuns(){
   }catch(e){$('runlist').innerHTML='<div style="color:var(--err);font-size:12px">加载失败</div>'}
 }
 window.delProj=async(id,n)=>{
-  if(!confirm('删除项目 '+id+'：将删除 '+n+' 个任务与产品代码，当前视图一并清零，不可恢复。确认？'))return;
+  if(!confirm('删除项目 '+id+'：将删除 '+n+' 个任务与产品代码，不可恢复。确认？'))return;
   const r=await(await fetch('/api/projects/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
-  toast(r.ok?'🗑 项目已整树删除（'+r.deletedRuns+' 任务）':'❌ '+r.error);loadRuns();
-};
-window.viewRun=id=>{ // 查看：切到当前任务视图并恢复该项目状态
-  showTab('run');addEv('查看','stage','📂 载入项目 '+id+'（只读视图，进度来自其 nodes.json）','stage-ev');
-  fetch('/api/state').then(r=>r.json()).then(()=>{toast('已切回当前任务视图；历史项目详情见其 runs 目录')});
+  loadRuns();tick();
 };
 window.iterRun=id=>{
   const idea=prompt('迭代需求（对 '+id+' 的产品做增量开发，外科式最小改动）：','');
   if(!idea)return;
-  showTab('run');$('flow').innerHTML='';
-  stream(fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea})}));
+  showTab('run');
+  fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea,__iterate:id})}).catch(()=>{});
+  // 走正式迭代接口：
+  fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea})}).then(()=>tick());
 };
 window.rbRun=async id=>{
   if(!confirm('回滚 '+id+' 的最近一次 git 提交？(git revert，可再撤回)'))return;
-  const r=await(await fetch('/api/runs/rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
-  toast(r.ok?'✅ 已回滚: '+r.reverted:'❌ '+r.error);loadRuns();
-};
-window.delRun=async id=>{
-  if(!confirm('彻底删除项目 '+id+'（含代码与证据，不可恢复）？'))return;
-  const r=await(await fetch('/api/runs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
-  toast(r.ok?'🗑 已删除':'❌ '+r.error);loadRuns();
+  await fetch('/api/runs/rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  loadRuns();
 };
 function showTab(t){
-  $('tabRun').classList.toggle('on',t==='run');$('tabProj').classList.toggle('on',t==='proj');
-  $('tabRun').style.cssText=t==='run'?'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)';
-  $('tabProj').style.cssText=t==='proj'?'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:9px 18px;font-size:13px;cursor:pointer;color:var(--muted)';
-  $('projPanel').style.display=t==='proj'?'':'none';$('runPanel').style.display=t==='run'?'flex':'none';
+  $('tabRun').style.cssText=t==='run'?'padding:6px 14px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:6px 14px;font-size:13px;cursor:pointer;color:var(--muted)';
+  $('tabProj').style.cssText=t==='proj'?'padding:6px 14px;font-size:13px;cursor:pointer;color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary)':'padding:6px 14px;font-size:13px;cursor:pointer;color:var(--muted)';
+  $('projPanel').style.display=t==='proj'?'block':'none';
+  ['inputbar','lanes','detail'].forEach(x=>$(x).style.display=t==='run'?'':'none');
   if(t==='proj')loadRuns();
 }
 $('tabRun').onclick=()=>showTab('run');$('tabProj').onclick=()=>showTab('proj');
-(async()=>{const s=await state();if(s&&s.idea&&!s.done){$('inp').value=s.idea;ui(s);addEv('恢复','stage','已从 nodes.json 恢复节点进度（刷新不丢）','stage-ev')}else if(s&&s.idea){ui(s)}})();
 </script>
 </body>
 </html>
