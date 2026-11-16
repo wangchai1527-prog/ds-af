@@ -163,6 +163,7 @@ function claudeStream(prompt,cwd,onEvent,onDone){
         }
       }else if(e.type==='result')onEvent({type:'meta',status:e.subtype,turns:e.num_turns});
     }});
+  p.on('error',e=>{try{onDone('spawn失败: '+e.message)}catch(e2){}}); // cwd 不存在/解释器缺失等：不崩服务，按节点失败处理
   p.on('close',()=>onDone(summary));
 }
 function brief(n,inp){
@@ -294,6 +295,7 @@ function runFrom(rs,idx,res){
     }
     const cwd=(rs.flow==='fix'&&['fix','regression'].includes(n.id)&&rs.repo)?rs.repo
       :(rs.flow==='build'&&n.id==='coding')?path.join(rs.dir,'product'):rs.dir; // build 开发在独立产品仓根执行
+    if(cwd!==rs.dir)try{fs.mkdirSync(cwd,{recursive:true})}catch(e){} // 历史 run 可能无 product/（Task 3 前布局）
     claudeStream(n.prompt(rs.idea,rs),cwd,ev=>emit(ev),summary=>{
       emit({type:'node_exec_done',node:n.id,text:(summary||'(无回执)').slice(0,500)});
       finishNode(n.accept(rs.dir,rs));
@@ -404,6 +406,7 @@ http.createServer((req,res)=>{
       if(rs&&rs.executing)return j(res,409,{error:'正在执行的任务不可删除'});
       fs.rmSync(p,{recursive:true});
       if(rs)activeRuns.delete(p);
+      projMutate(prs=>{for(const pr of prs)if(pr.runs)pr.runs=pr.runs.filter(x=>x!==id)}); // 去悬空引用
       return j(res,200,{ok:true,clearedActive:!!rs});
     });
     return;
@@ -543,17 +546,48 @@ http.createServer((req,res)=>{
     });
     return;
   }
-  if(req.method==='POST'&&u.pathname==='/api/retry'){ // 重试被阻断的节点（可带 {id}，缺省=最近活动 run）
+  if(req.method==='POST'&&u.pathname==='/api/runs/open'){ // 历史未完 run 重开（载入 activeRuns，paused 态）
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
-      let id=null;try{id=JSON.parse(b||'{}').id||null}catch(e){}
-      const rs=id?findRun(id):latestRun();
+      const id=(JSON.parse(b||'{}').id||'').replace(/[\/..]/g,'');
+      const p=path.join(RUNDIR,id);
+      if(!id)return j(res,400,{error:'bad id'});
+      if(activeRuns.has(p))return j(res,200,{ok:true,id,already:true});
+      if(!fs.existsSync(p)||!fs.statSync(p).isDirectory())return j(res,404,{error:'no run dir'});
+      const rs=restoreRun(p);
+      if(!rs)return j(res,400,{error:'run 已完整交付或 nodes.json 不可解析，无需重开'});
+      activeRuns.set(p,rs);
+      return j(res,200,{ok:true,id});
+    });
+    return;
+  }
+  if(req.method==='POST'&&u.pathname==='/api/retry'){ // 重试被阻断的节点（可带 {id} 缺省=最近活动 run；verifyOnly=仅重验判据）
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      let id=null,verifyOnly=false;try{const q=JSON.parse(b||'{}');id=q.id||null;verifyOnly=!!q.verifyOnly}catch(e){}
+      let rs=id?findRun(id):latestRun();
+      if(!rs&&id){ // 带 id 但未载入 → 自动 open 历史 run
+        const p=path.join(RUNDIR,id.replace(/[\/..]/g,''));
+        try{if(fs.statSync(p).isDirectory()){const r2=restoreRun(p);if(r2){activeRuns.set(p,r2);rs=r2}}}catch(e){}
+      }
       if(!rs)return j(res,400,{error:'no run'});
       if(rs.awaiting)return j(res,400,{error:'原型确认闸等待人工拍板 — 请用 /api/approve {go|redo}'});
       if(rs.executing)return j(res,400,{error:'run 正在执行'});
       const idx=rs.nodeStatus.indexOf('blocked');
       if(idx<0)return j(res,400,{error:'no blocked node'});
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
-      rs.events.push({type:'node_start',node:flowNodes(rs.flow)[idx].id,name:'人工重试',text:'👤 人工触发重试被阻断节点'});
+      const n=flowNodes(rs.flow)[idx];
+      if(verifyOnly){ // 人工外科修复产物后的轻通道：不跑 agent，仅重跑 accept 判据
+        rs.events.push({type:'node_start',node:n.id,name:'仅重验(verify-only)',text:'🔎 人工触发：不跑 agent，仅重跑验收判据'});
+        W(res,rs.events[rs.events.length-1]);
+        rs.stage=n.id;rs.nodeStatus[idx]='running';persist(rs);
+        const a=n.accept(rs.dir,rs);
+        rs.acceptDetails[idx]=`${a.pass?'✅':'⛔'} ${a.detail}`;
+        rs.nodeStatus[idx]=a.pass?'done':'blocked';rs.artifacts=listArtifacts(rs.dir);persist(rs);
+        const ev={type:'node_check',node:n.id,pass:a.pass,detail:a.detail,deliverable:n.deliverable};
+        rs.events.push(ev);W(res,ev);
+        if(!a.pass){rs.executing=false;const ev2={type:'pipeline_blocked',node:n.id,text:'⛔ 判据仍未过 — 可继续人工修复后再 verify-only'};rs.events.push(ev2);W(res,ev2);return res.end()}
+        return runFrom(rs,idx+1,res); // 判据过 → 从下一节点续跑
+      }
+      rs.events.push({type:'node_start',node:n.id,name:'人工重试',text:'👤 人工触发重试被阻断节点'});
       W(res,rs.events[rs.events.length-1]);
       runFrom(rs,idx,res);
     });
