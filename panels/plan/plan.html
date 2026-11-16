@@ -7,12 +7,15 @@
 :root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#7c3aed;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+#sbt{width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:15px;line-height:1;color:var(--muted);flex-shrink:0}
+#sbt:hover{border-color:var(--primary);color:var(--primary)}
 .logo{font-weight:700}.logo span{color:var(--primary)}
 .sub{font-size:12px;color:var(--muted)}
 main{flex:1;display:flex;overflow:hidden}
 /* 左：会话列表 */
-#side{width:320px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#side{width:320px;background:var(--card);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+#mask{display:none}
 #newbar{padding:10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:8px}
 #idea{width:100%;height:64px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:vertical;outline:none}
 #idea:focus{border-color:var(--primary)}
@@ -36,10 +39,10 @@ main{flex:1;display:flex;overflow:hidden}
 #work{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #top{padding:10px 18px;background:var(--card);border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 #top .idea{font-weight:700;font-size:14px}
-#tabs{display:flex;gap:2px;padding:6px 18px;background:var(--card);border-bottom:1px solid var(--border)}
-.tb{font-size:12.5px;padding:5px 14px;cursor:pointer;color:var(--muted);border-radius:8px 8px 0 0}
+#tabs{display:flex;gap:2px;padding:6px 18px;background:var(--card);border-bottom:1px solid var(--border);overflow-x:auto;flex-wrap:nowrap;scrollbar-width:thin}
+.tb{font-size:12.5px;padding:5px 14px;cursor:pointer;color:var(--muted);border-radius:8px 8px 0 0;white-space:nowrap;flex-shrink:0}
 .tb.on{color:var(--primary);font-weight:700;box-shadow:inset 0 -2px var(--primary)}
-#pane{flex:1;overflow-y:auto;padding:14px 18px}
+#pane{flex:1;overflow-y:auto;padding:14px 18px;min-width:0}
 .doc{font-size:13px;white-space:pre-wrap;line-height:1.8}
 .doc h1,.doc h2,.doc h3{margin:12px 0 4px}
 /* 决策点表 */
@@ -67,14 +70,34 @@ main{flex:1;display:flex;overflow:hidden}
 .mats{font-size:11px;color:var(--muted)}
 #events{max-height:110px;overflow-y:auto;font-family:var(--mono);font-size:10.5px;color:#9a9a9a;padding:4px 8px;background:#fafaf9;border-radius:6px;display:none}
 footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20px;font-size:11.5px;color:var(--muted);flex-shrink:0}
+/* 桌面：左侧栏折叠 */
+@media (min-width:861px){ body.noside #side{display:none} }
+/* 窄屏自适应：侧栏变抽屉，工作区独占 */
+@media (max-width:860px){
+  #side{position:fixed;top:0;bottom:0;left:0;z-index:50;width:min(300px,84vw);border-right:0;transform:translateX(-100%);transition:transform .2s ease;box-shadow:4px 0 24px rgba(0,0,0,.15)}
+  body.side-open #side{transform:none}
+  body.side-open #mask{display:block;position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:40}
+  .sub{display:none}
+  #top{padding:8px 12px}
+  #tabs{padding:6px 12px}
+  #pane{padding:10px 12px}
+  #replybar{padding:10px 12px}
+  #matrow{flex-wrap:wrap}
+  #matfn{width:120px}
+  .dt{font-size:11.5px}
+  .dt th,.dt td{padding:5px 7px}
+  footer{padding:4px 12px;font-size:10.5px}
+}
 </style>
 </head>
 <body>
 <header>
+  <button id="sbt" onclick="toggleSide()" title="折叠/展开会话列表">☰</button>
   <div class="logo">💡 Idea <span>Plan</span> 分析台</div>
   <div class="sub">分析到立项 · 人 reply 才跑一轮 · 磁盘唯一真源（逐轮只增不改）</div>
 </header>
 <main>
+  <div id="mask" onclick="toggleSide(true)"></div>
   <div id="side">
     <div id="newbar">
       <textarea id="idea" placeholder="想法，例：给工厂做个并发流水线观测面板的预研分析…（会自动跑第 1 轮，并与近 10 条历史分析比对防重复立项）"></textarea>
@@ -117,6 +140,13 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
 const $=id=>document.getElementById(id);
 const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let cur=null,tab='round',filter='all',pick={};
+/* 左侧栏：桌面折叠（记忆）· 窄屏抽屉 */
+const mqNarrow=matchMedia('(max-width:860px)');
+window.toggleSide=(closeOnly)=>{
+  if(mqNarrow.matches){document.body.classList.remove('side-open')}
+  else{const now=document.body.classList.toggle('noside');try{localStorage.setItem('planside-noside',now?'1':'0')}catch(e){}}
+};
+try{if(localStorage.getItem('planside-noside')==='1')document.body.classList.add('noside')}catch(e){}
 const STN={open:'🟣 分析中',awaiting:'🟡 待拍板',go:'🟢 已立项',park:'⚪ 搁置','no-go':'⚪ 否决'};
 const FLOWS=[['all','全部'],['open','分析中'],['awaiting','待拍板'],['go','已立项'],['park','搁置'],['no-go','否决']];
 
@@ -131,7 +161,7 @@ async function loadList(){
       <div class="meta"><span class="stt ${a.state}">${STN[a.state]||a.state}</span><span>第 ${a.round} 轮</span><span>${(a.updated||'').slice(5,16).replace('T',' ')}</span></div>
     </div>`).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
 }
-window.selSes=id=>{cur=id;pick={};loadList();loadDetail()};
+window.selSes=id=>{cur=id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()};
 
 /* 决策点表解析：| # | 决策点 | 选项 | 推荐 | 依据 | */
 function parseTable(md){
@@ -151,9 +181,9 @@ function renderRound(d){
   if(inn)h+=`<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--muted);cursor:pointer">本轮人的输入</summary><div class="doc" style="font-size:12px;color:#525252">${esc(inn)}</div></details>`;
   const rows=parseTable(out);
   if(rows.length){
-    h+='<table class="dt"><tr><th>#</th><th>决策点</th><th>选项（点击拍板）</th><th>推荐</th><th>依据</th></tr>';
+    h+='<div style="overflow-x:auto"><table class="dt"><tr><th>#</th><th>决策点</th><th>选项（点击拍板）</th><th>推荐</th><th>依据</th></tr>';
     for(const r of rows)h+=`<tr><td><b>${esc(r.id)}</b></td><td>${esc(r.q)}</td><td>${r.opts.map(o=>`<span class="opt ${pick[r.id]===o?'pick':''} ${o===r.rec?'rec':''}" onclick="pick['${r.id}']='${esc(o).replace(/'/g,"&#39;")}';loadDetail()">${esc(o)}</span>`).join('')}</td><td>${esc(r.rec)}</td><td>${esc(r.why)}</td></tr>`;
-    h+='</table>';
+    h+='</table></div>';
   }
   h+=`<div class="doc" style="font-size:12.5px;color:#404040;background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px">${mdHtml(out)||'（本轮暂无产物）'}</div>`;
   return h;
@@ -195,7 +225,7 @@ $('newbtn').onclick=async()=>{
   $('newbtn').disabled=true;
   const r=await(await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})})).json().catch(()=>({}));
   $('newbtn').disabled=false;
-  if(r.id){$('idea').value='';cur=r.id;pick={};loadList();loadDetail()}
+  if(r.id){$('idea').value='';cur=r.id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()}
 };
 /* reply */
 $('send').onclick=async()=>{
