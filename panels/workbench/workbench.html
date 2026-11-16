@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DSH 工作台 1.0 · TernaryFox Cockpit</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--border:#e5e7eb;--primary:#2563eb;--muted:#737373;--ok:#16a34a;--blue-bg:#e8edf8;--green-bg:#e8f3ec}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;min-height:100vh}
+.wrap{max-width:1060px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:20px;display:flex;align-items:center;gap:10px}
+h1 .v{font-size:11px;background:var(--primary);color:#fff;padding:2px 8px;border-radius:6px}
+.sub{color:var(--muted);font-size:13px;margin:4px 0 20px}
+.layer{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:18px;background:var(--card)}
+.band{padding:14px 20px;font-weight:700;font-size:15px}
+.band small{display:block;font-weight:400;font-size:12px;color:var(--muted);margin-top:2px}
+.band.cockpit-band{background:var(--blue-bg)}
+.band.dsh-band{background:var(--green-bg)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:16px 20px}
+.entry{border:1px solid var(--border);border-radius:12px;padding:16px;background:#fff;display:flex;flex-direction:column;gap:6px}
+.entry h3{font-size:15px;display:flex;align-items:center;gap:8px}
+.entry p{font-size:12.5px;color:var(--muted);flex:1}
+.entry .go{align-self:flex-start;font-size:12.5px;padding:6px 16px;border-radius:8px;border:0;cursor:pointer;font-weight:600;text-decoration:none}
+.st{font-size:11px;padding:1px 9px;border-radius:999px;border:1px solid}
+.st.live{color:var(--ok);border-color:var(--ok);background:#f0fdf4}
+.st.plan{color:var(--muted);border-color:var(--border)}
+.st.busy{color:#d97706;border-color:#d97706;background:#fffbeb}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;padding:0 20px 16px}
+.stat{background:#fff;border:1px solid var(--border);border-radius:10px;padding:10px 14px}
+.stat b{font-size:20px;color:var(--primary)}
+.stat span{display:block;font-size:11.5px;color:var(--muted)}
+.nodetrack{display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 16px}
+.nd{font-size:11px;font-family:ui-monospace,Menlo,monospace;border:1px solid var(--border);border-radius:6px;padding:2px 8px;color:var(--muted);background:#fff}
+.nd.done{border-color:#86efac;color:var(--ok)}
+.nd.blocked{border-color:#fca5a5;color:#dc2626}
+.eco{display:flex;flex-wrap:wrap;gap:8px;padding:16px 20px}
+.chip{font-size:12px;border:1px solid var(--border);border-radius:999px;padding:4px 12px;background:#fff;color:#525252}
+.chip b{color:var(--primary)}
+.svc{display:flex;justify-content:space-between;font-size:12px;padding:6px 0;border-bottom:1px dashed var(--border)}
+.svc:last-child{border:0}
+.svc .u{color:var(--ok)} .svc .d{color:#a3a3a3}
+footer{text-align:center;color:#a3a3a3;font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>⚡ DSH 工作台 <span class="v">1.0</span></h1>
+  <div class="sub">一个后台 · 多个独立工作入口 —— TernaryFox Cockpit 统一管理驾驶舱</div>
+
+  <!-- 统一驾驶舱 -->
+  <div class="layer">
+    <div class="band cockpit-band">🧭 TernaryFox Cockpit · 统一管理驾驶舱<small>统一身份、项目、权限、任务、统计、运行记录</small></div>
+    <div class="stats" id="stats"></div>
+    <div class="nodetrack" id="nodetrack"></div>
+  </div>
+
+  <!-- 四工作入口 -->
+  <div class="layer">
+    <div class="band" style="background:#fff">🚪 工作入口（独立 Session · 独立 Workspace · 不串台）</div>
+    <div class="grid">
+      <div class="entry">
+        <h3>📊 Quant 工作入口 <span class="st plan">规划中 v1.x</span></h3>
+        <p>策略研究、回测分析、量化运维 —— 承接 Alpha-Forge 现有能力（X8/MT5 数据口、EXP 回路），进入 Cockpit 统一任务合同制。</p>
+        <span class="go" style="background:#f5f5f5;color:var(--muted)">待接入</span>
+      </div>
+      <div class="entry" style="border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff">
+        <h3>🏭 Engineering 工作入口 <span class="st live" id="engSt">LIVE</span></h3>
+        <p>产品开发、代码审查、测试部署 —— 已实挂 Engineering Factory v2：节点管理制流水线（立项→PRD→方案→拆解→开发→QA→交付），验收不过即停。</p>
+        <a class="go" style="background:var(--primary);color:#fff" id="engLink" target="_blank" href="http://23.27.169.181:8794">进入 Engineering →</a>
+      </div>
+      <div class="entry">
+        <h3>📈 Growth 工作入口 <span class="st plan">规划中 v2.x</span></h3>
+        <p>SEO、内容、推广、转化分析 —— 依赖 Engineering 产出的 Bot Package 与 Landing 页交付链。</p>
+        <span class="go" style="background:#f5f5f5;color:var(--muted)">待接入</span>
+      </div>
+      <div class="entry">
+        <h3>🛠 Operations 工作入口 <span class="st plan">规划中 v2.x</span></h3>
+        <p>监控、客服、维护、版本升级 —— 对接运行记录与 Evidence 证据链，承接告警三态处置。</p>
+        <span class="go" style="background:#f5f5f5;color:var(--muted)">待接入</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- DSH 后台 -->
+  <div class="layer">
+    <div class="band dsh-band">🧠 DSH-Harness 后台<small>主控 Agent、子 Agent、任务调度、Session、工具调用、执行记录</small></div>
+    <div style="padding:4px 20px 16px" id="services"></div>
+  </div>
+
+  <!-- 能力生态 -->
+  <div class="layer">
+    <div class="band" style="background:#fff">⚙️ 底层执行与能力生态<small>Claude Code / 其他 Agent Runtime / Skills / Plugins / MCP / 模型服务</small></div>
+    <div class="eco" id="eco"></div>
+  </div>
+
+  <footer>DSH 工作台 1.0 · 架构对齐「一个后台，多个独立工作入口」· Engineering = Factory v2 节点管理制</footer>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+(async()=>{
+  try{
+    const d=await(await fetch('/api/overview')).json();
+    const eng=d.engineering;
+    $('engSt').textContent=eng.busy?'执行中':(eng.done?'LIVE · 已交付':'LIVE');
+    $('engSt').className='st '+(eng.busy?'busy':'live');
+    if(eng.nodes)$('engLink').href=eng.link;
+    const doneN=(eng.nodes||[]).filter(n=>n.status==='done').length;
+    $('stats').innerHTML=`
+      <div class="stat"><b>${d.runs.length}</b><span>研发 Run 记录</span></div>
+      <div class="stat"><b>${(eng.nodes||[]).length}</b><span>流程管理节点</span></div>
+      <div class="stat"><b>${doneN}</b><span>节点验收通过</span></div>
+      <div class="stat"><b>${d.services.filter(s=>s.up).length}/${d.services.length}</b><span>后台服务在线</span></div>`;
+    $('nodetrack').innerHTML=eng.idea?`<div style="width:100%;font-size:12px;color:var(--muted);margin-bottom:4px">当前任务：${eng.idea.slice(0,60)}…</div>`+(eng.nodes||[]).map(n=>`<span class="nd ${n.status==='done'?'done':n.status==='blocked'?'blocked':''}">${n.status==='done'?'✅':n.status==='blocked'?'⛔':'⏳'} ${n.name}</span>`).join(''):'';
+    $('services').innerHTML=d.services.map(s=>`<div class="svc"><span>${s.name} <span style="color:#a3a3a3">:${s.port}</span></span><span class="${s.up?'u':'d'}">${s.up?'● 在线':'○ 离线'}</span></div>`).join('');
+    $('eco').innerHTML=[`<span class="chip"><b>${d.runtime.claude||'Claude Code'}</b></span>`,`<span class="chip"><b>${d.runtime.playwright||'Playwright'}</b></span>`,...d.capabilities.map(c=>`<span class="chip">${c}</span>`)].join('');
+  }catch(e){$('stats').innerHTML='<div style="color:#a3a3a3;font-size:12px;padding:0 20px 12px">后台状态加载失败</div>'}
+})();
+setInterval(()=>location.reload(),30000);
+</script>
+</body>
+</html>

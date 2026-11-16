@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Engineering Cockpit Demo · 任务为中心的工作台</title>
+<style>
+:root{
+  --bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--text:#1a1a1a;--muted:#737373;
+  --ok:#16a34a;--warn:#d97706;--err:#dc2626;--radius:10px;--mono:ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.logo{font-weight:700}.logo span{color:var(--primary)}
+.badge{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);color:var(--muted);background:#fff}
+.spacer{flex:1}
+main{flex:1;display:grid;grid-template-columns:200px 1fr 320px;overflow:hidden}
+aside{background:var(--card);border-right:1px solid var(--border);padding:14px;overflow-y:auto}
+aside h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:16px 0 8px}
+aside h3:first-child{margin-top:0}
+.role{padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;font-size:13px;user-select:none}
+.role.sel{border-color:var(--primary);background:#eff6ff;color:var(--primary);font-weight:600}
+.role small{display:block;color:var(--muted);font-weight:400;font-size:11px}
+.role.auto{border-style:dashed;color:var(--ok);border-color:var(--ok);cursor:default;font-weight:400}
+#center{display:flex;flex-direction:column;overflow:hidden}
+.tabs{display:flex;gap:0;background:var(--card);border-bottom:1px solid var(--border);flex-shrink:0}
+.tab{padding:10px 22px;cursor:pointer;font-size:13px;color:var(--muted);border-bottom:2px solid transparent}
+.tab.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600}
+#view{flex:1;overflow-y:auto;padding:18px 22px}
+/* 任务看板 */
+#board{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.contract{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;font-size:12.5px;cursor:pointer;transition:box-shadow .15s}
+.contract:hover{box-shadow:0 2px 10px rgba(0,0,0,.07)}
+.contract.sel{border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff}
+.contract.conflict{border:2px solid var(--err);box-shadow:0 0 0 3px #fef2f2}
+.contract b{font-size:13px}
+.st{float:right;font-size:11px;padding:1px 9px;border-radius:999px;background:#f5f5f5;color:var(--muted)}
+.st.in_progress{background:#eff6ff;color:var(--primary);animation:pulse 1.2s infinite}
+.st.delivered{background:#fffbeb;color:var(--warn)}
+.st.accepted{background:#f0fdf4;color:var(--ok)}
+.st.returned{background:#fef2f2;color:var(--err)}
+@keyframes pulse{50%{opacity:.55}}
+.contract .obj{color:var(--muted);margin:6px 0}
+.contract .meta{font-family:var(--mono);font-size:11px;color:#a3a3a3}
+.empty{color:var(--muted);text-align:center;padding:60px 0;grid-column:1/-1}
+/* 回放 */
+#replay{max-width:760px;margin:0 auto}
+.rp-bar{display:flex;gap:10px;margin-bottom:16px}
+.btn{padding:6px 16px;border-radius:8px;border:1px solid var(--primary);background:var(--primary);color:#fff;cursor:pointer;font-size:13px}
+.btn.ghost{background:#fff;color:var(--primary)}
+.step-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:13px 16px;margin-bottom:10px;opacity:.4;transition:all .35s}
+.step-card.current{opacity:1;border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff}
+.step-card.done{opacity:.85;border-color:#bbf7d0}
+.step-head{display:flex;align-items:center;gap:10px}
+.step-num{width:22px;height:22px;border-radius:50%;background:#eee;color:var(--muted);font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.step-card.current .step-num{background:var(--primary);color:#fff}
+.step-card.done .step-num{background:var(--ok);color:#fff}
+.step-title{font-weight:600}
+.step-agent{font-size:12px;color:var(--muted)}
+.step-ev{font-family:var(--mono);font-size:12px;color:var(--ok);margin-top:6px;display:none}
+.step-card.done .step-ev,.step-card.current .step-ev{display:block}
+/* 聊天 dock */
+#dock{background:var(--card);border-top:1px solid var(--border);flex-shrink:0}
+#transcript{max-height:170px;overflow-y:auto;padding:10px 22px 0;display:none}
+#transcript.open{display:block}
+.tmsg{font-size:12.5px;margin-bottom:8px;max-width:88%}
+.tmsg.u{color:var(--primary);font-weight:600}
+.tmsg.a{color:var(--text);white-space:pre-wrap;background:#f9fafb;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-family:var(--mono);font-size:12px}
+.tmsg.a .who{color:var(--primary);font-weight:700;font-family:inherit}
+#inputbar{padding:12px 22px;display:flex;gap:10px;align-items:center}
+#inp{flex:1;padding:9px 14px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none;background:#fff}
+#inp:focus{border-color:var(--primary)}
+#send{padding:9px 20px;border-radius:10px;border:0;background:var(--primary);color:#fff;cursor:pointer;font-weight:600}
+#send:disabled{opacity:.5;cursor:wait}
+/* 右侧证据 */
+#right{background:var(--card);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#right h2{font-size:13px;color:var(--muted);padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0}
+#ev-body{flex:1;overflow-y:auto;padding:14px 16px;font-size:12.5px}
+#ev-body .ph{color:var(--muted)}
+.kv{font-family:var(--mono);font-size:11.5px;line-height:1.9;color:#525252}
+.kv b{color:var(--text)}
+.evblock{border-left:3px solid var(--ok);background:#f9fafb;border-radius:4px;padding:8px 10px;margin:8px 0;font-family:var(--mono);font-size:11.5px;white-space:pre-wrap}
+footer{background:var(--card);border-top:1px solid var(--border);padding:6px 20px;font-size:12px;color:var(--muted);display:flex;gap:16px;flex-shrink:0}
+footer b{color:var(--text)}
+#toast{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;display:none;z-index:9}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">⚡ Engineering <span>Cockpit</span> Demo</div>
+  <span class="badge">纯前端高仿真 · 验证信息架构</span>
+  <span class="badge" id="roleBadge">路由：自动</span>
+  <div class="spacer"></div>
+  <button class="btn ghost" id="resetAll" style="padding:5px 14px;font-size:12px">清空重置</button>
+</header>
+<main>
+  <aside>
+    <h3>执行 Agent（点选锁定 / 保持自动）</h3>
+    <div class="role auto sel" data-r="auto">自动路由<small>按任务关键词选角色</small></div>
+    <div class="role" data-r="manager">Engineering Manager<small>拆任务 · 派发 · 不写码</small></div>
+    <div class="role" data-r="coding">Coding Agent<small>写码 · 跑验证 · 回执</small></div>
+    <div class="role" data-r="qa">Review / QA<small>只读审查 · 通过/打回</small></div>
+    <div class="role" data-r="devops">DevOps<small>构建检查 · 回滚预案</small></div>
+    <h3>说明</h3>
+    <div style="font-size:12px;color:var(--muted);line-height:1.8">
+      · 聊天下任务 → 生成 Contract 卡<br>
+      · 状态机 pending→in_progress→delivered→accepted<br>
+      · 点卡片看右侧证据抽屉<br>
+      · 回放页含串台冲突拦截演示<br>
+      · 数据存 localStorage
+    </div>
+  </aside>
+  <div id="center">
+    <div class="tabs">
+      <div class="tab on" data-v="board">📋 任务看板（主视图）</div>
+      <div class="tab" data-v="replay">🧭 流程回放</div>
+    </div>
+    <div id="view">
+      <div id="board"><div class="empty">暂无任务 — 在下方输入框给 Agent 下第一条任务<br><span style="font-size:12px">例：「写一个登录表单组件并自测」</span></div></div>
+      <div id="replay" style="display:none">
+        <div class="rp-bar">
+          <button class="btn" id="autoPlay">▶ 自动播放</button>
+          <button class="btn ghost" id="stepBtn">单步 ▸</button>
+          <button class="btn ghost" id="rpReset">↺ 重置</button>
+          <span style="font-size:12px;color:var(--muted);align-self:center">7 步工作流 + 串台冲突拦截演示（步骤 4.5）</span>
+        </div>
+        <div id="steps"></div>
+      </div>
+    </div>
+    <div id="dock">
+      <div id="transcript"></div>
+      <div id="inputbar">
+        <input id="inp" placeholder="给 Agent 下达任务，回车发送（自动路由或左侧锁定角色）…" autocomplete="off">
+        <button id="send">下达 ▶</button>
+      </div>
+    </div>
+  </div>
+  <div id="right">
+    <h2>🗂 证据抽屉 · Task Contract</h2>
+    <div id="ev-body"><div class="ph">点击左侧任意任务卡片，查看 11 字段合同与执行证据。</div></div>
+  </div>
+</main>
+<footer>
+  <span>任务：<b id="ftN">0</b></span><span>执行中：<b id="ftRun">0</b></span><span>已完成：<b id="ftDone">0</b></span>
+  <span style="margin-left:auto">Cockpit 架构验证 demo：任务为中心，不是聊天为中心 · 纯模拟无真实执行</span>
+</footer>
+<div id="toast"></div>
+<script>
+/* ================= 状态 ================= */
+const LS='cockpit-demo-v1';
+let S=load()||{tasks:[],msgs:[],seq:1};
+function load(){try{return JSON.parse(localStorage.getItem(LS))}catch(e){return null}}
+function save(){localStorage.setItem(LS,JSON.stringify(S))}
+const $=id=>document.getElementById(id);
+const AGENT={manager:'Engineering Manager',coding:'Coding Agent',qa:'Review/QA Agent',devops:'DevOps Agent'};
+let lockRole='auto',selTask=null,busy=false;
+
+/* ================= 引擎（合同/状态机/冲突） ================= */
+const FIELDS=['task_id','project_id','parent_task_id','owner_agent','objective','input_artifacts','acceptance_criteria','git_branch','output_artifacts','status','evidence'];
+const TR={pending:['in_progress'],in_progress:['delivered','pending'],delivered:['accepted','returned','in_progress'],returned:['in_progress'],accepted:[]};
+function conflicts(){const g={};S.tasks.forEach(t=>{if(t.status==='in_progress'){const k=t.workspace_id+'|'+t.git_branch;(g[k]=g[k]||[]).push(t.task_id)}});return Object.values(g).filter(v=>v.length>1).flat()}
+
+/* ================= 聊天下任务（模块 A） ================= */
+const KW=[[/写|实现|开发|修复|重构|加功能|改/,'coding'],[/测|审查|review|检查|验收/,'qa'],[/部署|构建|发布|上线|打包/,'devops'],[/拆|计划|方案|需求分析|安排/,'manager']];
+function routeRole(m){if(lockRole!=='auto')return lockRole;for(const[re,r]of KW)if(re.test(m))return r;return 'manager'}
+const REPLY={
+ coding:t=>`收到，开始实现「${t}」。\n\n读取工作区上下文 → 编写代码 → 运行自测…\n\n[STATUS] done\n[CHANGES] src/${pinyin(t)||'module'}/index.js (+86) · src/${pinyin(t)||'module'}/test.js (+41)\n[TESTS] node --test · 4 passed, 0 failed ✅`,
+ qa:t=>`只读审查启动（不修改文件）。\n\n针对「${t}」：静态检查 + 用例核对 + 安全扫描…\n\n[STATUS] done\n[CHANGES] 无（只读）\n[TESTS] lint 0 error · 覆盖率 87% · 发现 1 个 minor 问题已记录\n结论：✅ 通过`,
+ devops:t=>`构建与部署检查：「${t}」\n\n[STATUS] done\n[CHANGES] 无（检查任务）\n[TESTS] build 通过 · 健康检查 200 · 回滚预案：git revert + 上一版本镜像`,
+ manager:t=>`需求已受理，拆解如下：\n\n1. 子任务 A（Coding）：实现「${t}」核心逻辑 — 验收：自测通过\n2. 子任务 B（QA）：编写验证用例 — 验收：覆盖主路径\n3. 子任务 C（DevOps）：构建检查 — 验收：构建通过\n\n已生成 Contract 卡片（见任务看板），按依赖顺序派发。`,
+};
+function pinyin(){return 'mod'+(S.seq)}
+function send(){
+  const m=$('inp').value.trim();if(!m||busy)return;
+  const role=routeRole(m);
+  addT('u',m);
+  $('inp').value='';busy=true;$('send').disabled=true;
+  const id='T'+(S.seq++);
+  const task={task_id:id,project_id:'P-TFWeb',parent_task_id:null,owner_agent:role,objective:m,
+    input_artifacts:['聊天指令'],acceptance_criteria:'回执 [STATUS]=done',git_branch:'feat/'+id.toLowerCase(),
+    output_artifacts:['代码/报告'],status:'pending',evidence:'',workspace_id:'w1',ts:new Date().toTimeString().slice(0,5)};
+  S.tasks.unshift(task);save();render();
+  const a=addT('a','',AGENT[role]);
+  setTimeout(()=>{task.status='in_progress';save();render()},1200);
+  typeInto(a,REPLY[role](m),18,()=>{
+    task.status='delivered';task.evidence=`[${AGENT[role]}] 回执 · ${new Date().toTimeString().slice(0,5)}\n`+REPLY[role](m).slice(0,600);
+    setTimeout(()=>{task.status='accepted';save();render();},1000);
+    busy=false;$('send').disabled=false;save();render();
+  });
+  $('transcript').classList.add('open');
+}
+function addT(cls,txt,who){const d=document.createElement('div');d.className='tmsg '+cls;if(who)d.innerHTML='<span class="who">'+who+'</span>\n';d.appendChild(document.createTextNode(txt));$('transcript').appendChild(d);$('transcript').scrollTop=1e9;if(cls==='u')save();return d}
+function typeInto(el,txt,ms,done){let i=0;(function w(){if(i<=txt.length){el.textContent=txt.slice(0,i);i+=2;$('transcript').scrollTop=1e9;setTimeout(w,ms)}else done&&done()})()}
+
+/* ================= 看板（模块 B）+ 证据抽屉（D） ================= */
+function render(){
+  const cf=conflicts();
+  $('board').innerHTML=S.tasks.length?S.tasks.map(t=>`
+   <div class="contract ${cf.includes(t.task_id)?'conflict':''} ${selTask===t.task_id?'sel':''}" data-id="${t.task_id}">
+     <b>${t.task_id}</b><span class="st ${t.status}">${t.status}</span>
+     <div class="obj">${esc(t.objective)}</div>
+     <div class="meta">${AGENT[t.owner_agent]||t.owner_agent} · ${t.git_branch} · ${t.ts}</div>
+     ${cf.includes(t.task_id)?'<div style="color:var(--err);font-size:11px;margin-top:6px">⛔ 同分支并行 in_progress — 冲突拦截</div>':''}
+   </div>`).join(''):'<div class="empty">暂无任务 — 在下方输入框给 Agent 下第一条任务</div>';
+  document.querySelectorAll('.contract').forEach(c=>c.onclick=()=>{selTask=c.dataset.id;render();renderEv()});
+  $('ftN').textContent=S.tasks.length;
+  $('ftRun').textContent=S.tasks.filter(t=>t.status==='in_progress').length;
+  $('ftDone').textContent=S.tasks.filter(t=>t.status==='accepted').length;
+  $('roleBadge').textContent='路由：'+(lockRole==='auto'?'自动':AGENT[lockRole]);
+}
+function renderEv(){
+  const t=S.tasks.find(x=>x.task_id===selTask);
+  if(!t){$('ev-body').innerHTML='<div class="ph">点击左侧任意任务卡片，查看 11 字段合同与执行证据。</div>';return}
+  const missing=FIELDS.filter(f=>!t[f]);
+  $('ev-body').innerHTML=`
+   <div style="font-weight:700;margin-bottom:8px">${t.task_id} <span class="st ${t.status}">${t.status}</span></div>
+   <div class="kv">
+     <b>project_id</b>: ${t.project_id}<br><b>parent</b>: ${t.parent_task_id||'—'}<br>
+     <b>owner_agent</b>: ${AGENT[t.owner_agent]}<br><b>objective</b>: ${esc(t.objective)}<br>
+     <b>input_artifacts</b>: ${t.input_artifacts.join(', ')}<br><b>acceptance_criteria</b>: ${t.acceptance_criteria}<br>
+     <b>git_branch</b>: ${t.git_branch}<br><b>output_artifacts</b>: ${t.output_artifacts.join(', ')}<br>
+     <b>字段校验</b>: ${missing.length?'❌ 缺 '+missing.join(','):'✅ 11 字段齐全'}
+   </div>
+   <div class="evblock">${t.evidence?esc(t.evidence):'⏳ 证据待执行完成后生成…'}</div>`;
+}
+function esc(s){return String(s).replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+
+/* ================= 回放（模块 C，含冲突演示） ================= */
+const STEPS=[
+ {t:'需求输入',a:'👤 人',d:'"需要用户注册/登录/管理后台"',ev:'input: 需求 + 截图'},
+ {t:'Product → PRD',a:'Product Agent',d:'用户故事 5 + 验收标准 8',ev:'📄 PRD.md v1'},
+ {t:'Architect → TechSpec',a:'Architect Agent',d:'API 6 / 表 3 / 页面 3 + 分支规划',ev:'📄 TechSpec.md'},
+ {t:'Manager 拆解派发',a:'Engineering Manager',d:'3 份 Contract · worktree 隔离并行',ev:'📦 T1/T2/T3 下发'},
+ {t:'⛔ 串台防线演示',a:'engine.detectConflicts',d:'模拟：T1 与 T1b 同分支同时 in_progress',ev:'🚨 冲突拦截 — 后者阻止推进，红框标记',conflict:true},
+ {t:'Coding ×3 反馈循环',a:'Coding Agents',d:'Prompt→Code→Run→Observe→Fix→Verify',ev:'⎇ 3 分支提交 · 回执 [STATUS][CHANGES][TESTS]'},
+ {t:'Review + QA 独立验证',a:'Review/QA Agent',d:'打回 2 问题→修复；E2E 8/8',ev:'✅ Review 报告 + QA Evidence'},
+ {t:'DevOps 构建发布',a:'DevOps Agent',d:'构建 + 预发布 + 健康检查（演示版无人批闸门）',ev:'🚀 Release v1.0.0 + 证据包归档'},
+];
+let rpCur=0,rpTimer=null;
+function renderRp(){
+  $('steps').innerHTML=STEPS.map((s,i)=>{
+    const cls=i<rpCur?'done':(i===rpCur?'current':'');
+    return `<div class="step-card ${cls} ${s.conflict&&i===rpCur?'conflict':''}" ${s.conflict&&i===rpCur?'style="border-color:var(--err);box-shadow:0 0 0 3px #fef2f2"':''}>
+      <div class="step-head"><div class="step-num">${i<rpCur?'✓':i+1}</div>
+      <div><div class="step-title">${s.t}</div><div class="step-agent">${s.a} · ${s.d}</div></div></div>
+      <div class="step-ev">${s.ev}</div></div>`}).join('');
+}
+function stepRp(){if(rpCur<STEPS.length){renderRp();rpCur++;setTimeout(renderRp,300)}}
+$('autoPlay').onclick=()=>{stopRp();stepRp();rpTimer=setInterval(()=>{if(rpCur>=STEPS.length)stopRp();else stepRp()},1600)};
+$('stepBtn').onclick=()=>{stopRp();stepRp()};
+$('rpReset').onclick=()=>{stopRp();rpCur=0;renderRp()};
+function stopRp(){if(rpTimer){clearInterval(rpTimer);rpTimer=null}}
+
+/* ================= 全局交互 ================= */
+document.querySelectorAll('.tabs .tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tabs .tab').forEach(x=>x.classList.remove('on'));t.classList.add('on');
+  const rp=t.dataset.v==='replay';
+  $('replay').style.display=rp?'':'none';$('board').style.display=rp?'none':'';
+  if(rp)renderRp();
+});
+document.querySelectorAll('.role').forEach(r=>r.onclick=()=>{
+  document.querySelectorAll('.role').forEach(x=>x.classList.remove('sel'));r.classList.add('sel');lockRole=r.dataset.r;render();
+  toast(lockRole==='auto'?'已恢复自动路由':'已锁定角色：'+AGENT[lockRole]);
+});
+$('resetAll').onclick=()=>{if(confirm('清空全部任务与对话？')){localStorage.removeItem(LS);S={tasks:[],msgs:[],seq:1};selTask=null;$('transcript').innerHTML='';save();render();renderEv()}};
+$('send').onclick=send;
+$('inp').onkeydown=e=>{if(e.key==='Enter')send()};
+function toast(m){const t=$('toast');t.textContent=m;t.style.display='block';setTimeout(()=>t.style.display='none',2000)}
+
+render();renderRp();
+</script>
+</body>
+</html>

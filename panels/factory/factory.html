@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Engineering Factory v2 · 节点管理制</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+.logo{font-weight:700}.logo span{color:var(--primary)}
+.badge{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);color:var(--muted)}
+.badge.live{color:var(--ok);border-color:var(--ok)}
+.badge.blocked{color:var(--err);border-color:var(--err)}
+main{flex:1;display:grid;grid-template-columns:1fr 350px;overflow:hidden}
+#left{display:flex;flex-direction:column;overflow:hidden}
+/* 节点轨道 */
+#nodes{background:var(--card);border-bottom:1px solid var(--border);padding:12px 18px;display:flex;gap:8px;overflow-x:auto;flex-shrink:0}
+.node{min-width:150px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;font-size:12px;background:#fff;flex-shrink:0}
+.node .t{font-weight:700;display:flex;align-items:center;gap:6px}
+.node .o{color:var(--muted);font-size:11px;margin-top:2px}
+.node.pending{opacity:.5}
+.node.running{border-color:var(--primary);box-shadow:0 0 0 3px #eff6ff}
+.node.running .t{color:var(--primary)}
+.node.done{border-color:var(--ok);background:#f0fdf4}
+.node.blocked{border:2px solid var(--err);background:#fef2f2}
+.node .chk{font-size:10.5px;font-family:var(--mono);margin-top:4px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#flow{flex:1;overflow-y:auto;padding:14px 20px;display:flex;flex-direction:column;gap:6px}
+.ev{display:flex;gap:10px;align-items:flex-start;animation:in .25s}
+@keyframes in{from{opacity:0;transform:translateY(5px)}}
+.ev .tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;flex-shrink:0;min-width:58px;text-align:center}
+.tag.stage{background:#1a1a1a;color:#fff}.tag.check{background:#fef3c7;color:#92400e}
+.tag.read{background:#eff6ff;color:var(--primary)}.tag.write{background:#f0fdf4;color:var(--ok)}
+.tag.run{background:#fff7ed;color:var(--warn)}.tag.think{background:#fafaf9;color:#78716c;border:1px solid var(--border)}
+.ev .body{font-family:var(--mono);font-size:12.5px;color:#404040;white-space:pre-wrap;word-break:break-all;padding-top:1px}
+.ev.stage-ev .body{font-family:inherit;font-weight:600;font-size:13px}
+.ev.check-ev .body{font-family:var(--mono);font-size:12px}
+.ev.block-ev .body{color:var(--err);font-family:inherit;font-weight:700}
+#retrybar{display:none;padding:10px 20px;background:#fef2f2;border-top:1px solid var(--err);flex-shrink:0;align-items:center;gap:12px}
+#retryBtn{padding:8px 20px;border-radius:8px;border:0;background:var(--err);color:#fff;font-weight:600;cursor:pointer}
+#inputbar{padding:14px 20px;background:var(--card);border-top:1px solid var(--border);display:flex;gap:10px;flex-shrink:0}
+#inp{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none}
+#inp:focus{border-color:var(--primary)}
+#send{padding:10px 22px;border-radius:10px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+#send:disabled{opacity:.5;cursor:wait}
+#previewBtn{display:none;padding:10px 16px;border-radius:10px;border:1px solid var(--ok);background:#f0fdf4;color:var(--ok);font-weight:600;cursor:pointer}
+#right{background:var(--card);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+#right h3{font-size:12px;color:var(--muted);padding:10px 16px;border-bottom:1px solid var(--border)}
+#arts{flex:1;overflow-y:auto;padding:10px 14px}
+.art{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:6px 10px;border-radius:6px;background:#f9fafb;margin-bottom:5px;cursor:pointer;color:#525252}
+.art:hover{background:#eff6ff;color:var(--primary)}
+.art .doc{color:var(--primary);font-weight:700}
+#fileview{max-height:42%;overflow-y:auto;border-top:1px solid var(--border);padding:10px 14px;font-family:var(--mono);font-size:11px;white-space:pre-wrap;color:#404040;background:#fcfcfc;line-height:1.7}
+footer{background:var(--card);border-top:1px solid var(--border);padding:6px 20px;font-size:12px;color:var(--muted);flex-shrink:0}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🏭 Engineering <span>Factory</span> v2 · 节点管理制</div>
+  <span class="badge live">● 按研发流程节点跟进 · 验收不过即停</span>
+  <span class="badge" id="stBadge">待命</span>
+  <div style="flex:1"></div>
+  <span class="badge">进入条件 → 执行 → 验收判据 → 放行/阻断</span>
+</header>
+<main>
+  <div id="left">
+    <div id="nodes"><div style="font-size:12px;color:var(--muted);padding:8px 4px">立项后按节点跟进…</div></div>
+    <div id="flow"><div class="ev"><span class="tag stage">START</span><div class="body">输入产品想法立项 → 工厂按 7 个管理节点推进：每个节点有负责人/交付物/验收判据，验收不过流水线即停（⛔），人工重试后才能继续 —— 防止跑偏。</div></div></div>
+    <div id="retrybar">⛔ <span id="retryMsg" style="font-size:13px;color:var(--err)"></span><button id="retryBtn">👤 重试被阻断节点</button></div>
+    <div id="inputbar">
+      <input id="inp" placeholder="产品想法，例：做一个记账小应用，支持分类统计和月度报表…" autocomplete="off">
+      <button id="send">🚀 立项开工</button>
+      <button id="previewBtn" onclick="window.open('/preview/index.html','_blank')">👁 预览产品</button>
+    </div>
+  </div>
+  <div id="right">
+    <h3>📦 产物（实时生成 · 点击查看）</h3>
+    <div id="arts"></div>
+    <div id="fileview">…</div>
+  </div>
+</main>
+<footer>节点状态持久化(nodes.json) · 刷新/重启不丢进度 · 验收判据磁盘实测，不信 Agent 自报</footer>
+<script>
+const $=id=>document.getElementById(id);
+const ICON={pending:'⏳',running:'▶️',done:'✅',blocked:'⛔'};
+const TAG={Read:['read','📋'],Write:['write','✍️'],Edit:['write','✍️'],Bash:['run','▶️']};
+let busy=false;
+function renderNodes(nodes){
+  if(!nodes||!nodes.length)return;
+  $('nodes').innerHTML=nodes.map(n=>`<div class="node ${n.status}">
+    <div class="t">${ICON[n.status]} ${n.name}</div>
+    <div class="o">${n.owner} · 交付:${n.deliverable}</div>
+    <div class="chk" title="${(n.acceptDetail||('进入:'+n.entry)).replace(/"/g,'')}">${n.acceptDetail||('进入:'+n.entry)}</div>
+  </div>`).join('');
+}
+function addEv(tag,cls,text,extra){
+  const d=document.createElement('div');d.className='ev '+extra;
+  d.innerHTML=`<span class="tag ${cls}">${tag}</span>`;const b=document.createElement('div');b.className='body';b.textContent=text;d.appendChild(b);
+  $('flow').appendChild(d);$('flow').scrollTop=1e9;
+}
+function kindOf(name,type){
+  if(type==='dir')return['📁','目录'];
+  if(name.endsWith('PRD.md'))return['📋','产品需求'];
+  if(name.endsWith('TechSpec.md'))return['📐','技术方案'];
+  if(name.endsWith('DIAGNOSIS.md'))return['🔍','根因诊断'];
+  if(name.endsWith('SURVEY.md'))return['🧭','现场勘察'];
+  if(name.endsWith('QA-Report.md'))return['✅','验收报告'];
+  if(name.endsWith('DELIVERY.md'))return['📦','交付说明'];
+  if(name.endsWith('manifest.json'))return['🪪','运行身份'];
+  if(name.endsWith('events.jsonl'))return['🔁','过程记录'];
+  if(name.endsWith('.md'))return['📄','文档'];
+  if(name.endsWith('.html'))return name.includes('prototype')?['🎨','交互原型 · 可点击预览']:['🌐','产品页面 · 可点击预览'];
+  if(name.endsWith('.json'))return['🗂','任务合同'];
+  if(/\.(js|mjs|css)$/.test(name))return['⌨️','代码'];
+  return['📎','文件'];
+}
+function mdToHtml(md){
+  const esc=t=>t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  let h=esc(md);
+  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>'<pre style="background:#f5f5f5;border:1px solid #e5e5e5;border-radius:6px;padding:8px;overflow-x:auto;font-size:11px">'+c+'</pre>');
+  h=h.replace(/^###### (.*)$/gm,'<h6>$1</h6>').replace(/^##### (.*)$/gm,'<h5>$1</h5>')
+     .replace(/^#### (.*)$/gm,'<h4 style="margin:10px 0 4px">$1</h4>').replace(/^### (.*)$/gm,'<h3 style="margin:12px 0 4px">$1</h3>')
+     .replace(/^## (.*)$/gm,'<h2 style="margin:14px 0 6px;font-size:15px">$1</h2>').replace(/^# (.*)$/gm,'<h1 style="margin:14px 0 8px;font-size:17px">$1</h1>');
+  h=h.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/^\s*[-*] (.*)$/gm,'<li>$1</li>').replace(/(<li>[\s\S]*?<\/li>)(?!\s*<li>)/g,'<ul style="margin:4px 0 4px 16px">$1</ul>');
+  h=h.replace(/^\|(.+)\|$/gm,m=>{const cells=m.slice(1,-1).split('|');return '<tr>'+cells.map(c=>'<td style="border:1px solid #e5e5e5;padding:3px 8px;font-size:11.5px">'+c.trim()+'</td>').join('')+'</tr>'});
+  h=h.replace(/(<tr>[\s\S]*?<\/tr>)(?!\s*<tr>)/g,'<table style="border-collapse:collapse;margin:8px 0">$1</table>');
+  return h.replace(/\n{2,}/g,'<br><br>');
+}
+function renderArts(arts){
+  $('arts').innerHTML=(arts||[]).map(a=>{
+    const[ico,kind]=kindOf(a.name,a.type);
+    const isHtml=a.name.endsWith('.html');
+    return `<div class="art" data-n="${a.name}" data-html="${isHtml?1:0}" title="${kind}">
+      <span class="doc">${ico} ${a.name.split('/').pop()}</span>
+      <span style="color:#a3a3a3;font-size:11px">${kind}${a.size!=='dir'?' · '+a.size:''}${isHtml?' →':''}</span></div>`;
+  }).join('')||'<div style="font-size:12px;color:var(--muted)">…</div>';
+  document.querySelectorAll('.art').forEach(e=>e.onclick=async()=>{
+    const n=e.dataset.n;
+    if(e.dataset.html==='1'){window.open('/preview/'+encodeURIComponent(n),'_blank');return}
+    try{
+      $('fileview').innerHTML='加载中…';
+      const c=await(await fetch('/api/file?name='+encodeURIComponent(n))).json();
+      if(n.endsWith('.md')){$('fileview').innerHTML='<div style="font-size:11px;color:#a3a3a3;margin-bottom:6px">📄 '+n+'（渲染视图）</div>'+mdToHtml(c.content||'(空)')}
+      else if(n.endsWith('.jsonl')){$('fileview').textContent=(c.content||'').split('\n').slice(-30).join('\n')}
+      else{$('fileview').textContent=c.content||'(空)'}
+    }catch(_){$('fileview').textContent='(不可读)'}
+  });
+}
+function ui(r){
+  renderNodes(r.nodes);renderArts(r.artifacts);
+  const blk=r.nodes&&r.nodes.find(n=>n.status==='blocked');
+  $('retrybar').style.display=blk?'flex':'none';
+  if(blk){$('retryMsg').textContent=`节点「${blk.name}」验收未过：${blk.acceptDetail||''}`;$('stBadge').textContent='⛔ 阻断：'+blk.name;$('stBadge').className='badge blocked'}
+  else if(r.done){$('stBadge').textContent='✅ 全部节点通过';$('stBadge').className='badge live';$('previewBtn').style.display=''}
+  else if(r.stage){$('stBadge').textContent='执行中：'+r.stage;$('stBadge').className='badge'}
+}
+$('send').onclick=go;$('inp').onkeydown=e=>{if(e.key==='Enter')go()};
+$('retryBtn').onclick=async()=>{
+  $('retrybar').style.display='none';$('flow').innerHTML='';
+  stream(fetch('/api/retry',{method:'POST'}));
+};
+async function go(){
+  const idea=$('inp').value.trim();if(!idea||busy)return;
+  busy=true;$('send').disabled=true;$('send').textContent='⏳ 生产中…';
+  $('inp').value='';$('flow').innerHTML='';$('previewBtn').style.display='none';
+  stream(fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})}));
+}
+async function stream(fp){
+  busy=true;
+  try{
+    const r=await fp;
+    if(r.status===422){const e=await r.json();addEv('拒收','stage','⛔ '+e.error,'block-ev');busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';return}
+    if(r.status===409){
+      addEv('占用','stage','⏳ 工厂正在执行上一个任务，新任务未受理 —— 下方加载当前任务实时进度','block-ev');
+      const s=await state();
+      if(s&&s.idea){
+        renderNodes(s.nodes);renderArts(s.artifacts);
+        addEv('当前','stage','📋 '+s.idea,'stage-ev');
+        (s.events||[]).forEach(e=>{
+          if(e.type==='flow')addEv('路由','stage',e.text,'stage-ev');
+          else if(e.type==='node_start')addEv('节点','stage',(e.owner||'')+' 开始「'+(e.name||e.node)+'」（交付：'+(e.deliverable||'—')+'）','stage-ev');
+          else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
+          else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+(e.deliverable||'')+' — '+e.detail,'check-ev');
+          else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
+          else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
+          else if(e.type==='text')addEv('💬','think',e.text);
+          else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
+        });
+        addEv('提示','stage','⏳ 轮询该任务进度（每 5s 刷新尾部）… 刷新页面可看全量','stage-ev');
+        const t=setInterval(async()=>{const s2=await state();if(!s2||!s2.idea){clearInterval(t);return}
+          renderNodes(s2.nodes);renderArts(s2.artifacts);if(s2.done){clearInterval(t);ui(s2);addEv('完成','stage','✅ 当前任务已交付，可提交新任务','stage-ev')}},5000);
+      }
+      busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';return;
+    }
+    const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+    while(true){
+      const{done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});let i;
+      while((i=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;
+        let e;try{e=JSON.parse(line)}catch{continue}
+        if(e.type==='flow')addEv('路由','stage',e.text,'stage-ev');
+        else if(e.type==='node_start')addEv('节点','stage',`${e.owner} 开始「${e.name||e.node}」（交付：${e.deliverable||'—'}）`,'stage-ev');
+        else if(e.type==='node_exec_done')addEv('回执','think',(e.text||'').slice(0,400));
+        else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+`${e.deliverable} — ${e.detail}`,'check-ev');
+        else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
+        else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
+        else if(e.type==='text')addEv('💬','think',e.text);
+        else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
+        if(['node_start','node_check','pipeline_blocked','all_done'].includes(e.type)){const s=await state();ui(s)}
+      }
+    }
+  }catch(err){addEv('ERROR','stage',''+err,'block-ev')}
+  busy=false;$('send').disabled=false;$('send').textContent='🚀 立项开工';
+  ui(await state());
+}
+async function state(){try{return (await(await fetch('/api/state')).json()).run||{}}catch(_){return{}}}
+(async()=>{const s=await state();if(s&&s.idea&&!s.done){$('inp').value=s.idea;ui(s);addEv('恢复','stage','已从 nodes.json 恢复节点进度（刷新不丢）','stage-ev')}else if(s&&s.idea){ui(s)}})();
+</script>
+</body>
+</html>

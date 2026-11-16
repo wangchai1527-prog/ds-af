@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vibe Coding Studio · 看得见的开发逻辑</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{background:var(--card);border-bottom:1px solid var(--border);padding:10px 20px;display:flex;gap:12px;align-items:center;flex-shrink:0}
+.logo{font-weight:700}.logo span{color:var(--primary)}
+.badge{padding:2px 10px;border-radius:999px;font-size:12px;border:1px solid var(--border);color:var(--muted)}
+.badge.live{color:var(--ok);border-color:var(--ok)}
+main{flex:1;display:grid;grid-template-columns:300px 1fr 260px;overflow:hidden}
+aside{background:var(--card);border-right:1px solid var(--border);padding:16px;overflow-y:auto;display:flex;flex-direction:column}
+aside h3{font-size:12px;color:var(--muted);margin-bottom:10px}
+#loop{display:flex;flex-direction:column;gap:0;margin-bottom:18px}
+.loop-step{display:flex;gap:10px;align-items:flex-start;padding:6px 8px;border-radius:8px;font-size:13px;color:var(--muted);transition:all .3s}
+.loop-step .ico{width:26px;height:26px;border-radius:8px;background:#f0f0f0;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0}
+.loop-step.on{background:#eff6ff;color:var(--primary);font-weight:600}
+.loop-step.on .ico{background:var(--primary);color:#fff}
+.loop-step small{display:block;font-weight:400;font-size:11px;color:var(--muted)}
+#examples{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.ex{font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:8px;cursor:pointer;color:var(--muted);background:#fff}
+.ex:hover{border-color:var(--primary);color:var(--primary)}
+#center{display:flex;flex-direction:column;overflow:hidden}
+#flow{flex:1;overflow-y:auto;padding:18px 24px;display:flex;flex-direction:column;gap:8px}
+.ev{display:flex;gap:10px;align-items:flex-start;animation:in .25s}
+@keyframes in{from{opacity:0;transform:translateY(6px)}}
+.ev .tag{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:6px;flex-shrink:0;min-width:64px;text-align:center}
+.tag.read{background:#eff6ff;color:var(--primary)}
+.tag.write{background:#f0fdf4;color:var(--ok)}
+.tag.run{background:#fff7ed;color:var(--warn)}
+.tag.think{background:#fafaf9;color:#78716c;border:1px solid var(--border)}
+.tag.sys{background:#1a1a1a;color:#fff}
+.ev .body{font-family:var(--mono);font-size:12.5px;color:#404040;white-space:pre-wrap;word-break:break-all;padding-top:1px}
+.ev .body.text{font-family:inherit;font-size:13px;background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px 12px;white-space:pre-wrap}
+#inputbar{padding:14px 24px;background:var(--card);border-top:1px solid var(--border);display:flex;gap:10px}
+#inp{flex:1;padding:10px 14px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none}
+#inp:focus{border-color:var(--primary)}
+#send{padding:10px 24px;border-radius:10px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
+#send:disabled{opacity:.5;cursor:wait}
+#right{background:var(--card);border-left:1px solid var(--border);overflow-y:auto;padding:14px}
+#right h3{font-size:12px;color:var(--muted);margin-bottom:10px}
+.file{font-family:var(--mono);font-size:12px;padding:5px 8px;border-radius:6px;background:#f9fafb;margin-bottom:5px;color:#525252}
+#hist .h{font-size:12px;padding:6px 8px;border-left:3px solid var(--border);margin-bottom:6px;color:var(--muted);cursor:default}
+#hist .h b{color:var(--text)}
+footer{background:var(--card);border-top:1px solid var(--border);padding:6px 20px;font-size:12px;color:var(--muted);flex-shrink:0}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">⚡ Vibe Coding <span>Studio</span></div>
+  <span class="badge live">● 真引擎直播 · Claude Code CLI</span>
+  <span class="badge">工作区 demo/lab</span>
+  <div style="flex:1"></div>
+  <span class="badge">Prompt→Code→Run→Observe→Fix→Verify 全程可见</span>
+</header>
+<main>
+  <aside>
+    <h3>这就是 Vibe Coding 的逻辑（下方实时点亮）</h3>
+    <div id="loop">
+      <div class="loop-step" data-s="think"><div class="ico">💬</div><div>理解任务·想方案<small>Agent 读需求，决定怎么干</small></div></div>
+      <div class="loop-step" data-s="read"><div class="ico">📋</div><div>读取上下文<small>看现有文件，不瞎猜</small></div></div>
+      <div class="loop-step" data-s="write"><div class="ico">✍️</div><div>写/改代码<small>真文件真修改</small></div></div>
+      <div class="loop-step" data-s="run"><div class="ico">▶️</div><div>运行验证<small>跑起来看真实结果</small></div></div>
+      <div class="loop-step" data-s="think2"><div class="ico">🔍</div><div>观察结果<small>错了就修，对了就过</small></div></div>
+      <div class="loop-step" data-s="done"><div class="ico">✅</div><div>回执交付<small>[STATUS][CHANGES][TESTS]</small></div></div>
+    </div>
+    <h3>试一试（点击填入）</h3>
+    <div id="examples">
+      <div class="ex">写一个 fizzbuzz.js 并运行验证</div>
+      <div class="ex">写一个 todo.js 待办模块，带 3 条自测并跑通</div>
+      <div class="ex">看看 lab 里有什么文件，给 hello.js 加注释再运行</div>
+    </div>
+  </aside>
+  <div id="center">
+    <div id="flow"><div class="ev"><span class="tag sys">START</span><div class="body">输入一个任务，看 Agent 怎么一步步干活 —— 左侧循环会实时点亮对应阶段。</div></div></div>
+    <div id="inputbar">
+      <input id="inp" placeholder="给 Coding Agent 下任务（Enter 发送）…" autocomplete="off">
+      <button id="send">执行 ▶</button>
+    </div>
+  </div>
+  <div id="right">
+    <h3>📁 工作区文件</h3><div id="files"></div>
+    <h3 style="margin-top:16px">🕘 最近任务</h3><div id="hist"><div style="font-size:12px;color:var(--muted)">暂无</div></div>
+  </div>
+</main>
+<footer>Vibe Coding Studio · 真执行：claude CLI 在 /root/.dsh/demo/lab 写码运行 · 每一步工具调用实时直播，开发逻辑不再被黑盒</footer>
+<script>
+const $=id=>document.getElementById(id);
+const STAGE={Read:'read',Write:'write',Edit:'write',Bash:'run'};
+const TAG={read:['read','📋 读取'],write:['write','✍️ 写码'],run:['run','▶️ 运行'],think:['think','💬 思考'],sys:['sys','系统']};
+let busy=false;
+function lit(s){document.querySelectorAll('.loop-step').forEach(e=>e.classList.toggle('on',e.dataset.s===s))}
+function addEv(tag,cls,text){const d=document.createElement('div');d.className='ev';d.innerHTML=`<span class="tag ${cls}">${tag}</span>`;const b=document.createElement('div');b.className='body'+(cls==='think'&&tag.includes('思')?' text':'');b.textContent=text;d.appendChild(b);$('flow').appendChild(d);$('flow').scrollTop=1e9}
+document.querySelectorAll('.ex').forEach(e=>e.onclick=()=>{$('inp').value=e.textContent;$('inp').focus()});
+async function refreshFiles(){try{$('files').innerHTML=(await(await fetch('/api/files')).json()).files.map(f=>`<div class="file">${f}</div>`).join('')||'<div style="font-size:12px;color:var(--muted)">(空)</div>'}catch(_){}}
+$('send').onclick=go;$('inp').onkeydown=e=>{if(e.key==='Enter')go()};
+async function go(){
+  const m=$('inp').value.trim();if(!m||busy)return;
+  busy=true;$('send').disabled=true;$('inp').value='';
+  $('flow').innerHTML='';lit('think');addEv('系统','sys','任务下发：'+m);
+  try{
+    const r=await fetch('/api/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:m})});
+    const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+    while(true){
+      const{done,value}=await reader.read();if(done)break;
+      buf+=dec.decode(value,{stream:true});let i;
+      while((i=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,i).trim();buf=buf.slice(i+1);if(!line)continue;
+        let e;try{e=JSON.parse(line)}catch{continue}
+        if(e.type==='tool'){const st=STAGE[e.tool]||'think';lit(e.tool==='Bash'?'run':st);const[cls,label]=TAG[st];addEv(label,cls,e.brief)}
+        else if(e.type==='text'){lit(e.text.includes('STATUS')?'done':'think2');addEv('💬 思考','think',e.text.slice(0,900))}
+        else if(e.type==='stage'){lit(e.stage==='done'?'done':'think');addEv('系统','sys',e.text);if(e.stage==='done'){busy=false;$('send').disabled=false;refreshFiles()}}
+      }
+    }
+  }catch(err){addEv('系统','sys','连接失败:'+err);busy=false;$('send').disabled=false}
+  busy=false;$('send').disabled=false;refreshFiles();
+}
+refreshFiles();
+</script>
+</body>
+</html>
