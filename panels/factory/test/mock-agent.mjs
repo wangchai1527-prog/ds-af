@@ -12,13 +12,13 @@ if(prompt.includes('Product Agent')){W('llmwiki/prompt-product.txt',prompt);if(p
 else if(prompt.includes('Prototype Agent')){W('llmwiki/prompt-prototype.txt',prompt);W('runtime/prototype.html','<!DOCTYPE html><html><body><button onclick="alert(1)">x</button><script>'+pad('/*mock*/',2000)+'</script></body></html>');}
 else if(prompt.includes('Architect Agent'))W('llmwiki/TechSpec.md','# TechSpec\n## 文件结构\n- js/\n## 数据结构\nlocalStorage 键表。\n'+pad('技术方案正文：文件结构、每个文件职责、数据结构与 localStorage 键表设计说明。',260));
 else if(prompt.includes('Engineering Manager'))W('llmwiki/tasks.json',JSON.stringify([{task_id:'T1',objective:'骨架',owner_agent:'coding',acceptance_criteria:'index 存在',git_branch:'t1'},{task_id:'T2',objective:'逻辑',owner_agent:'coding',acceptance_criteria:'js 存在',git_branch:'t2'}],null,1));
-else if(prompt.includes('Coding Agent')){
-  if(fs.existsSync(path.join(d,'llmwiki','block-marker'))){ /* 写残件 → accept 不过 → blocked */ W('runtime/partial.txt','x'); }
-  else{W('runtime/index.html','<!DOCTYPE html><html><body>ok</body></html>');W('llmwiki/tasks.json',JSON.stringify([{task_id:'T1',objective:'骨架',owner_agent:'coding',acceptance_criteria:'index',git_branch:'t1',status:'done'},{task_id:'T2',objective:'逻辑',owner_agent:'coding',acceptance_criteria:'js',git_branch:'t2',status:'done'}],null,1));}
+else if(prompt.includes('Coding Agent')){ // cwd=product/（独立产品仓根），llmwiki 在 ../llmwiki
+  if(fs.existsSync(path.join(d,'..','llmwiki','block-marker'))){ /* 写残件 → accept 不过 → blocked */ W('partial.txt','x'); }
+  else{W('index.html','<!DOCTYPE html><html><body>ok</body></html>');W('../llmwiki/tasks.json',JSON.stringify([{task_id:'T1',objective:'骨架',owner_agent:'coding',acceptance_criteria:'index',git_branch:'t1',status:'done'},{task_id:'T2',objective:'逻辑',owner_agent:'coding',acceptance_criteria:'js',git_branch:'t2',status:'done'}],null,1));}
 }else if(prompt.includes('QA'))W('llmwiki/QA-Report.md','# QA\n'+pad('逐项检查全部通过，证据充分：入口存在、交互可用、数据落盘正确。',200)+'\n结论：PASS\n');
-else if(prompt.includes('DevOps Agent')){
+else if(prompt.includes('DevOps Agent')){ // 交付 git 只在 product/ 内，不对 run 根 init
   W('llmwiki/DELIVERY.md','# DELIVERY\n清单+运行方式+已知限制。\n');
-  try{execSync('git init -q',{cwd:d});execSync('git -c user.email=t@t -c user.name=t add -A',{cwd:d});execSync('git -c user.email=t@t -c user.name=t commit -qm "delivery v1.0.0" --allow-empty',{cwd:d})}catch(e){}
+  try{const p=path.join(d,'product');execSync('git init -q',{cwd:p});execSync('git -c user.email=t@t -c user.name=t add -A',{cwd:p});execSync('git -c user.email=t@t -c user.name=t commit -qm "delivery v1.0.0" --allow-empty',{cwd:p})}catch(e){}
 }
 process.stdout.write(JSON.stringify({type:'assistant',message:{content:[{type:'text',text:'mock 节点完成'}]}})+'\n');
 process.stdout.write(JSON.stringify({type:'result',subtype:'success',num_turns:1})+'\n');

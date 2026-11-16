@@ -38,8 +38,8 @@ const findRun=id=>{if(!id)return null;for(const rs of activeRuns.values())if(pat
 const j=(r,c,o)=>{r.writeHead(c,{'Content-Type':'application/json; charset=utf-8'});r.end(JSON.stringify(o))};
 // Workspace Standard 1.0
 function scaffold(dir,flow,idea,repo){
-  for(const d of ['loop','llmwiki','runtime','skills','plugins'])fs.mkdirSync(path.join(dir,d),{recursive:true});
-  fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify({run_id:path.basename(dir),standard:'workspace-1.0',flow,idea,repo:repo||null,created:new Date().toISOString()},null,1));
+  for(const d of ['loop','llmwiki','runtime','skills','plugins','product'])fs.mkdirSync(path.join(dir,d),{recursive:true});
+  fs.writeFileSync(path.join(dir,'manifest.json'),JSON.stringify({run_id:path.basename(dir),standard:'workspace-1.0',flow,idea,repo:repo||null,productDir:'product',created:new Date().toISOString()},null,1));
   fs.writeFileSync(path.join(dir,'plugins','used.json'),'[]');
   fs.writeFileSync(path.join(dir,'skills','README.md'),'本次运行沉淀的技能候选\n');
 }
@@ -100,9 +100,9 @@ const ITERNODES=[
   accept:(d,rs)=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let ok=false;try{ok=execSync('git -C '+rs.repo+' log --oneline -1',{encoding:'utf8',env:ENV}).includes('iterate')}catch(e){}
     return{pass:!!c&&ok,detail:'DELIVERY.md:'+!!c+' · iterate提交:'+ok}}},
 ];
-function findIndexHtmlRoot(dir){ // 返回含 index.html 的最近目录（含 runtime/）
+function findIndexHtmlRoot(dir){ // 返回含 index.html 的最近目录（product/ 优先，旧布局 runtime/ 兼容）
   if(!dir)return null;
-  const cand=[path.join(dir,'runtime'),dir];
+  const cand=[path.join(dir,'product'),path.join(dir,'runtime'),dir];
   for(const c of cand){if(rf(c,'index.html')||rf(c,'prototype.html'))return c}
   return null;
 }
@@ -130,19 +130,19 @@ const NODES=[
   deliverable:'tasks.json',
   accept:d=>{try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));return{pass:Array.isArray(t)&&t.length>=2&&t.length<=8&&t.every(x=>x.task_id&&x.objective&&x.acceptance_criteria),detail:`${t.length} 份合同 · 字段齐全:${t.every(x=>x.task_id&&x.objective&&x.acceptance_criteria)}`}}catch(e){return{pass:false,detail:'tasks.json 解析失败: '+e.message}}}},
  {id:'coding',name:'真实开发',owner:'Coding Agent',entry:'任务合同验收通过',
-  prompt:i=>`你是 Coding Agent。读 llmwiki/PRD.md、llmwiki/TechSpec.md、llmwiki/tasks.json，逐个完成全部 coding 任务：在 runtime/ 目录下真实创建代码文件（runtime/index.html 必须存在）并用 node 运行能跑的验证。每完成一个任务，把 llmwiki/tasks.json 里该 task 加 "status":"done"。遵守 TechSpec 文件结构，零外部依赖，浅色现代风格。完成后回执 [STATUS]/[CHANGES]/[TESTS]。`,
+  prompt:i=>`你是 Coding Agent。读 ../llmwiki/PRD.md、../llmwiki/TechSpec.md、../llmwiki/tasks.json，逐个完成全部 coding 任务：在当前目录（product/ —— 它本身就是独立产品仓库根）真实创建代码文件（index.html 必须存在于当前目录）并用 node 运行能跑的验证。每完成一个任务，把 ../llmwiki/tasks.json 里该 task 加 "status":"done"。遵守 TechSpec 文件结构，零外部依赖，浅色现代风格。完成后回执 [STATUS]/[CHANGES]/[TESTS]。`,
   deliverable:'代码 + tasks.json(status=done)',
-  accept:d=>{const idx=findIndexHtml(path.join(d,'runtime'));let all=true,n=0;try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));n=t.length;all=t.every(x=>x.status==='done')}catch(e){all=false}
+  accept:d=>{const root=findIndexHtmlRoot(d);const idx=root?path.relative(d,root):null;let all=true,n=0;try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));n=t.length;all=t.every(x=>x.status==='done')}catch(e){all=false}
     return{pass:!!idx&&all,detail:`入口页:${idx||'未找到'} · 任务done:${all?`全部${n}`:'否(未逐个标记)'}`}}},
  {id:'qa',name:'QA 验证',owner:'QA Agent',entry:'开发验收通过（全部任务 done）',
   prompt:i=>`你是 QA/Review Agent（只读代码，可用 node 运行验证，禁止修改代码文件）。对照 PRD.md 验收标准和 tasks.json 逐项检查，能运行的一律真实运行。写 llmwiki/QA-Report.md（中文：逐项 通过/未通过+证据，结论行必须含 PASS、PARTIAL 或 FAIL）。`,
   deliverable:'QA-Report.md',
   accept:d=>{const c=rf(path.join(d,'llmwiki'),'QA-Report.md')||'';return{pass:c.length>200&&/PASS|PARTIAL|FAIL/.test(c),detail:`${c.length}字 · 结论:${(c.match(/PASS|PARTIAL|FAIL/g)||[]).join(',')}`}}},
  {id:'delivery',name:'交付',owner:'DevOps Agent',entry:'QA 结论为 PASS/PARTIAL',
-  prompt:i=>`你是 DevOps Agent。git add -A && git commit -m "delivery v1.0.0"（无 .git 先 git init 并 config 本地身份）。写 llmwiki/DELIVERY.md（中文：交付清单/如何运行/已知限制/版本）。不改代码。`,
-  deliverable:'DELIVERY.md + git 提交',
-  accept:d=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let commits='';try{commits=execSync('git -C '+d+' log --oneline',{encoding:'utf8',env:ENV}).trim()}catch(e){}
-    return{pass:!!c&&commits.includes('delivery'),detail:`DELIVERY.md:${!!c} · git提交:${commits.split('\n').length} 条`}}},
+  prompt:i=>`你是 DevOps Agent。在 product/ 目录内（它本身就是独立产品仓）：若无 .git 先 git init 并 config 本地身份，然后 git add -A && git commit -m "delivery v1.0.0"（不对 run 根 init）。写 llmwiki/DELIVERY.md（中文：交付清单/如何运行/已知限制/版本）。不改代码。`,
+  deliverable:'DELIVERY.md + product/ 内 git 提交',
+  accept:d=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let commits='';try{commits=execSync('git -C '+path.join(d,'product')+' log --oneline',{encoding:'utf8',env:ENV}).trim()}catch(e){}
+    return{pass:!!c&&commits.includes('delivery'),detail:`DELIVERY.md:${!!c} · product/git提交:${commits.split('\n').length} 条`}}},
 ];
 
 function claudeStream(prompt,cwd,onEvent,onDone){
@@ -253,7 +253,8 @@ function runFrom(rs,idx,res){
     if(!n.prompt){ // kickoff：无执行直接验收
       finishNode(n.accept(rs.dir,rs));return;
     }
-    const cwd=(rs.flow==='fix'&&['fix','regression'].includes(n.id)&&rs.repo)?rs.repo:rs.dir;
+    const cwd=(rs.flow==='fix'&&['fix','regression'].includes(n.id)&&rs.repo)?rs.repo
+      :(rs.flow==='build'&&n.id==='coding')?path.join(rs.dir,'product'):rs.dir; // build 开发在独立产品仓根执行
     claudeStream(n.prompt(rs.idea,rs),cwd,ev=>emit(ev),summary=>{
       emit({type:'node_exec_done',node:n.id,text:(summary||'(无回执)').slice(0,500)});
       finishNode(n.accept(rs.dir,rs));
