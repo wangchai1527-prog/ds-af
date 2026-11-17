@@ -471,6 +471,7 @@ http.createServer((req,res)=>{
       if(!idea)return j(res,400,{error:'empty idea'});
       const cls=classify(idea);
       if(cls.flow==='research')return j(res,422,{error:cls.reason});
+      if(cls.flow==='build')return j(res,422,{error:'开发立项已收口到 Idea PLAN 分析台 —— 话题走完收敛并拍板 GO 后，在本面板「选话题立项」；此入口仅收运维修复工单（问题描述+目标仓库绝对路径）'});
       let dir=newRunDir(cls.flow==='fix'?'fix-':'run-');
       let repo=null;
       if(cls.flow==='fix'){repo=extractPath(idea);if(!repo)return j(res,422,{error:'修复流需要带目标仓库绝对路径（如 /root/xxx 的问题描述），未识别到有效目录'});}
@@ -496,29 +497,74 @@ http.createServer((req,res)=>{
     });
     return;
   }
-  if(req.method==='POST'&&u.pathname==='/api/mission/from-plan'){ // 分析台下传：分析产物 = 工厂输入料（非工厂产物）
+  if(req.method==='GET'&&u.pathname==='/api/analyses'){ // 分析台话题列表（立项池数据源：state=go 且未 spawn 的可选）
+    const list=[];
+    try{for(const id of fs.readdirSync(ANALYSES).filter(d=>d.startsWith('an-')).sort().reverse()){
+      const d=path.join(ANALYSES,id);const m=rf(d,'meta.json');if(!m)continue;
+      try{const meta=JSON.parse(m);
+        list.push({id,dir:d,idea:(meta.idea||'').slice(0,120),state:meta.state,round:meta.round,updated:meta.updated,spawnedRun:meta.spawnedRun||null})}
+      catch(e){}
+    }}catch(e){}
+    return j(res,200,{analyses:list});
+  }
+  if(req.method==='POST'&&u.pathname==='/api/mission/from-plan'){ // 分析台话题立项三通：build(默认)/fix(带 repo)/iterate(带 projectId)；分析产物 = 工厂输入料（非工厂产物）
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
-      const{analysisDir='',idea=''}=JSON.parse(b||'{}');
+      const{analysisDir='',idea='',mode='build',repo='',projectId=''}=JSON.parse(b||'{}');
       const ad=path.resolve(analysisDir);
       if(!ad.startsWith(ANALYSES+path.sep)||!fs.existsSync(ad)||!fs.statSync(ad).isDirectory())
         return j(res,400,{error:'analysisDir 必须位于 '+ANALYSES+' 之下的会话目录'});
+      const amRaw=rf(ad,'meta.json');
+      if(!amRaw)return j(res,400,{error:'分析会话缺 meta.json，不是合法的分析台话题'});
+      let am;try{am=JSON.parse(amRaw)}catch(e){return j(res,400,{error:'meta.json 不可解析'})}
+      if(am.state!=='go')return j(res,400,{error:'话题未拍板 GO（当前状态 '+am.state+'）—— 先在 Idea PLAN 分析台拍板 GO 再立项'});
+      if(am.spawnedRun)return j(res,409,{error:'该话题已立项过 run '+am.spawnedRun,runId:am.spawnedRun});
+      if(!['build','fix','iterate'].includes(mode))return j(res,422,{error:'mode 须为 build|fix|iterate'});
       if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
-      if(!idea.trim())return j(res,400,{error:'empty idea'});
-      const dir=newRunDir('run-');
-      scaffold(dir,'build',idea.trim(),null);
-      const dst=path.join(dir,'materials','analysis');fs.mkdirSync(dst,{recursive:true});
-      try{
-        for(const f of ['IDEA.md','RESEARCH.md','BRIEF.md']){const s=path.join(ad,f);if(fs.existsSync(s))fs.copyFileSync(s,path.join(dst,f))}
-        const msrc=path.join(ad,'materials');
-        if(fs.existsSync(msrc))cpDir(msrc,path.join(dst,'materials'));
-      }catch(e){}
-      const rs={dir,id:path.basename(dir),idea:idea.trim(),flow:'build',repo:null,parentProject:null,stage:null,
-        nodeStatus:NODES.map(_=>'pending'),acceptDetails:[],gate:true,awaiting:null,
-        events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
+      const ideaText=((idea||'').trim())||String(am.idea||'').trim(); // idea 可省，回退 meta 真源
+      if(!ideaText)return j(res,400,{error:'empty idea'});
+      const copyAnalysis=dir=>{ // 分析产物随行（BRIEF 为首要输入料）
+        const dst=path.join(dir,'materials','analysis');fs.mkdirSync(dst,{recursive:true});
+        try{
+          for(const f of ['IDEA.md','RESEARCH.md','BRIEF.md']){const s=path.join(ad,f);if(fs.existsSync(s))fs.copyFileSync(s,path.join(dst,f))}
+          const msrc=path.join(ad,'materials');
+          if(fs.existsSync(msrc))cpDir(msrc,path.join(dst,'materials'));
+        }catch(e){}
+      };
+      let dir,rs,flowText;
+      if(mode==='fix'){ // 转修复：话题结论落到既有仓（不建新产品仓）
+        const rp=path.resolve(repo||'');
+        if(!path.isAbsolute(repo||'')||!fs.existsSync(rp)||!fs.statSync(rp).isDirectory())
+          return j(res,400,{error:'转修复需要有效目标仓库绝对路径 repo（现存目录）'});
+        dir=newRunDir('fix-');scaffold(dir,'fix',ideaText,rp);copyAnalysis(dir);
+        rs={dir,id:path.basename(dir),idea:ideaText,flow:'fix',repo:rp,parentProject:null,stage:null,
+          nodeStatus:FIXNODES.map(_=>'pending'),acceptDetails:[],gate:false,awaiting:null,
+          events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
+        flowText='🔧 运维修复流（来自 Idea PLAN 话题 '+path.basename(ad)+' · 目标仓: '+rp+'）';
+      }else if(mode==='iterate'){ // 转升级：话题结论迭代到已交付项目
+        const projs=loadProjects();const pr=projs.find(x=>x.id===projectId);
+        if(!pr)return j(res,404,{error:'项目 '+projectId+' 不存在'});
+        let parent=null,repoDir=null;
+        for(const rid of [...(pr.runs||[])].reverse()){const p=path.join(RUNDIR,rid);const r=findIndexHtmlRoot(p);if(r){parent=rid;repoDir=r;break}}
+        if(!parent)return j(res,400,{error:'项目 '+pr.id+' 无已交付产品代码，不能转升级'});
+        dir=newRunDir('run-');scaffold(dir,'iterate',ideaText,repoDir);copyAnalysis(dir);
+        rs={dir,id:path.basename(dir),idea:ideaText,flow:'iterate',repo:repoDir,parentProject:pr.id,stage:null,
+          nodeStatus:ITERNODES.map(_=>'pending'),acceptDetails:[],gate:false,awaiting:null,
+          events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
+        flowText='⬆️ 升级迭代流（来自 Idea PLAN 话题 '+path.basename(ad)+' · 项目 '+pr.id+' · 基于 '+parent+' 产品）';
+      }else{ // build：既有「选话题立项」
+        dir=newRunDir('run-');scaffold(dir,'build',ideaText,null);copyAnalysis(dir);
+        rs={dir,id:path.basename(dir),idea:ideaText,flow:'build',repo:null,parentProject:null,stage:null,
+          nodeStatus:NODES.map(_=>'pending'),acceptDetails:[],gate:true,awaiting:null,
+          events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
+        flowText='🟢 立项开发流（来自 Idea PLAN 话题 '+path.basename(ad)+' · 原型后设确认闸）';
+      }
       activeRuns.set(dir,rs);
+      am.spawnedRun=rs.id;am.updated=new Date().toISOString(); // 回写分析台：防重复立项 + 状态可追溯
+      try{fs.writeFileSync(path.join(ad,'meta.json'),JSON.stringify(am,null,1));
+        fs.appendFileSync(path.join(ad,'events.jsonl'),JSON.stringify({ts:Date.now(),ev:'spawned',run:rs.id,mode})+'\n')}catch(e){}
       res.writeHead(200,{'Content-Type':'application/json; charset=utf-8'});
-      res.end(JSON.stringify({id:rs.id,runId:rs.id}));
-      rs.events.push({type:'flow',flow:'build',text:'🟢 立项开发流（来自分析台下传: '+path.basename(ad)+' · 原型后设确认闸）'});
+      res.end(JSON.stringify({id:rs.id,runId:rs.id,mode}));
+      rs.events.push({type:'flow',flow:rs.flow,text:flowText});
       logLoop(dir,rs.events[rs.events.length-1]);
       runFrom(rs,0,null);
     });

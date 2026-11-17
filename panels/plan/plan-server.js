@@ -1,9 +1,9 @@
 // Idea Plan 分析台 v1 —— 会话/轮次协议（单一真源=磁盘，逐轮只增不改）
-// 端口 8792 · 独立服务，零耦合工厂（仅 decide go 时调工厂 from-plan）
+// 端口 8792 · 独立服务，零耦合工厂（GO 仅提交立项池，立项由工厂 from-plan 拉起并回写 spawnedRun）
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const PORT=process.env.PORT||8792;
 const ADIR=process.env.ANALYSES||'/root/.dsh/DS-AF/analyses';
-const FACTORY=process.env.FACTORY_URL||'http://127.0.0.1:8794';
+const FACTORY=process.env.FACTORY_URL||'http://127.0.0.1:8794'; // 工厂地址（转修复/转升级服务端代呼，免 CORS）
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin'};
 fs.mkdirSync(ADIR,{recursive:true});
 
@@ -131,22 +131,48 @@ const srv=http.createServer(async(req,res)=>{
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/decide$/))){
     const{decision,note}=await body(req);const s=readMeta(m[1]);
     if(!s)return json(res,404,{error:'会话不存在'});
-    if(!['go','no-go','park'].includes(decision))return json(res,422,{error:'decision 须为 go|no-go|park'});
-    if(s.meta.state!=='awaiting')return json(res,400,{error:'当前非 awaiting（未收敛），不能拍板'});
+    if(!['go','no-go','park','withdraw'].includes(decision))return json(res,422,{error:'decision 须为 go|no-go|park|withdraw'});
+    if(running.has(m[1]))return json(res,409,{error:'本轮分析进行中，请稍候'});
     if(decision==='go'){
-      s.meta.state='go';s.meta.spawnedRun=null;
-      try{ // 工厂 from-plan（Task 2 落地后生效；不可达/未实现 → 保持 go 等人工重下发）
-        const r=await fetch(FACTORY+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({analysisDir:s.dir,idea:s.meta.idea})});
-        const j=await r.json().catch(()=>({}));
-        if(r.ok&&j.id)s.meta.spawnedRun=j.id;
-      }catch(e){}
-      writeMeta(s.dir,s.meta);log(s.dir,{ev:'decide',decision,note:note||'',spawnedRun:s.meta.spawnedRun});
-      return json(res,200,{ok:true,state:'go',spawnedRun:s.meta.spawnedRun});
+      if(!['awaiting','open'].includes(s.meta.state))return json(res,400,{error:'当前状态 '+s.meta.state+' 不能拍板 GO（open/awaiting 均可：收敛后正常拍板，或分析中强制提交）'});
+      s.meta.state='go';s.meta.spawnedRun=null; // GO=提交立项池；真正建 run 由工厂「选话题立项/转修复/转升级」触发并回写 spawnedRun
+      writeMeta(s.dir,s.meta);log(s.dir,{ev:'decide',decision,note:note||''});
+      return json(res,200,{ok:true,state:'go'});
     }
+    if(decision==='withdraw'){ // 撤回拍板：已提交但工厂尚未选走 → 回到待拍板
+      if(s.meta.state!=='go')return json(res,400,{error:'仅「已提交」状态可撤回'});
+      if(s.meta.spawnedRun)return json(res,409,{error:'工厂已立项 run '+s.meta.spawnedRun+'，不能撤回（先到工厂处理该 run）'});
+      s.meta.state='awaiting';writeMeta(s.dir,s.meta);
+      log(s.dir,{ev:'decide',decision,note:note||''});
+      return json(res,200,{ok:true,state:'awaiting'});
+    }
+    // no-go / park：任意非在跑状态可用（不必等收敛；已被工厂选走的除外）
+    if(s.meta.spawnedRun)return json(res,409,{error:'工厂已立项 run '+s.meta.spawnedRun+'，不能否决/搁置（先到工厂处理该 run）'});
     s.meta.state=decision;writeMeta(s.dir,s.meta);
     log(s.dir,{ev:'decide',decision,note:note||''});
     return json(res,200,{ok:true,state:decision});
+  }
+  if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/delete$/))){ // 硬删：磁盘唯一真源，删了即没
+    const s=readMeta(m[1]);
+    if(!s)return json(res,404,{error:'会话不存在'});
+    if(running.has(m[1]))return json(res,409,{error:'本轮分析进行中，不能删除'});
+    if(s.meta.spawnedRun)return json(res,409,{error:'工厂已立项 run '+s.meta.spawnedRun+'，不能删除（先到工厂删除该 run 或另择话题）'});
+    fs.rmSync(s.dir,{recursive:true,force:true});
+    return json(res,200,{ok:true,deleted:m[1]});
+  }
+  if(req.method==='GET'&&u==='/api/factory/projects'){ // 代理工厂项目列表（转升级选择器数据源）
+    try{const r=await fetch(FACTORY+'/api/projects');return json(res,r.status,await r.json())}
+    catch(e){return json(res,502,{error:'工厂不可达: '+(e.message||'')})}
+  }
+  if(req.method==='POST'&&u==='/api/dispatch'){ // 话题直通工厂：mode=fix(带目标仓)|iterate(带项目)
+    const p=await body(req);const{mode='build',repo='',projectId=''}=p;
+    if(!p.id||!/^an-[\w-]+$/.test(p.id))return json(res,422,{error:'id 非法'});
+    const s=readMeta(p.id);if(!s)return json(res,404,{error:'会话不存在'});
+    try{
+      const r=await fetch(FACTORY+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({analysisDir:s.dir,mode,repo,projectId})});
+      return json(res,r.status,await r.json().catch(()=>({})));
+    }catch(e){return json(res,502,{error:'工厂不可达: '+(e.message||'')})}
   }
   json(res,404,{error:'not found'});
 });

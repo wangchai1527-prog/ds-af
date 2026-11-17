@@ -1,13 +1,15 @@
 import {test,after} from 'node:test';import assert from 'node:assert/strict';
 import {spawn} from 'child_process';import fs from 'fs';import path from 'path';import os from 'os';
-// Task 2：from-plan 下传（分析产物=工厂输入料）+ 原型确认闸（awaiting/approve）
+import {mkGoAnalysis} from './lib-plan.mjs';
+// Task 2：from-plan 话题立项（分析产物=工厂输入料）+ GO/防重闸 + 原型确认闸（awaiting/approve）
 const ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-fp-')); // 模拟 DS-AF 根：analyses/ + runs/ + projects.json
 const ANROOT=path.join(ROOT,'analyses');const RUNROOT=path.join(ROOT,'runs');
 fs.mkdirSync(ANROOT,{recursive:true});fs.mkdirSync(RUNROOT,{recursive:true});
 const PROJ=path.join(ROOT,'projects.json');fs.writeFileSync(PROJ,'[]');
-// 造一个分析会话
+// 造一个已拍板 GO 的分析会话
 const ANID='an-test-1';const ANDIR=path.join(ANROOT,ANID);
 fs.mkdirSync(path.join(ANDIR,'materials'),{recursive:true});
+fs.writeFileSync(path.join(ANDIR,'meta.json'),JSON.stringify({id:ANID,idea:'看板观测面板（来自分析台）',state:'go',round:2,spawnedRun:null},null,1));
 fs.writeFileSync(path.join(ANDIR,'IDEA.md'),'# IDEA 想法');
 fs.writeFileSync(path.join(ANDIR,'RESEARCH.md'),'# RESEARCH 调研');
 fs.writeFileSync(path.join(ANDIR,'BRIEF.md'),'# BRIEF 定稿\n产品形态：看板。范围：P0。');
@@ -23,11 +25,21 @@ const stream=async(m,u,b)=>{const r=await fetch('http://127.0.0.1:'+TP+u,{method
 async function poll(fn,ms=20000,step=300){const t0=Date.now();while(Date.now()-t0<ms){if(await fn())return true;await new Promise(r=>setTimeout(r,step))}return false}
 let runId=null;
 
-test('from-plan 建run + 拷分析产物入 materials/analysis/ + PRD prompt 注入 BRIEF',async()=>{
+test('from-plan 闸：非 go 话题 400 · /api/analyses 立项池列表 · 建run + 拷分析产物 + 回写 spawnedRun + 重复立项 409',async()=>{
   const bad=await api('POST','/api/mission/from-plan',{analysisDir:'/etc'+path.join(ROOT,'../evil'),idea:'x'});
   assert.equal(bad.code,400,'analysisDir 越界应 400');
+  const open=mkGoAnalysis(ANROOT,'未拍板话题（open 态）','open');
+  const notGo=await api('POST','/api/mission/from-plan',{analysisDir:open});
+  assert.equal(notGo.code,400,'未拍板 GO 的话题应 400');
+  const lst=await api('GET','/api/analyses');
+  assert.ok(lst.body.analyses.some(a=>a.id===ANID&&a.state==='go'&&!a.spawnedRun),'立项池应含 GO 未 spawn 话题');
   const r=await api('POST','/api/mission/from-plan',{analysisDir:ANDIR,idea:'看板观测面板（来自分析台）'}); // from-plan 返回 JSON
   assert.equal(r.code,200);runId=r.body.id||r.body.runId;assert.ok(runId,'应返回 runId');
+  const meta=JSON.parse(fs.readFileSync(path.join(ANDIR,'meta.json'),'utf8'));
+  assert.equal(meta.spawnedRun,runId,'spawnedRun 应回写分析台 meta');
+  const dup=await api('POST','/api/mission/from-plan',{analysisDir:ANDIR,idea:'x'});
+  assert.equal(dup.code,409,'同一话题重复立项应 409');
+  assert.equal(dup.body.runId,runId,'409 应带已立项 runId');
   const rd=path.join(RUNROOT,runId);
   const ok=await poll(()=>fs.existsSync(path.join(rd,'llmwiki','prompt-product.txt')));
   assert.ok(ok,'PRD 节点应已执行');
@@ -36,6 +48,11 @@ test('from-plan 建run + 拷分析产物入 materials/analysis/ + PRD prompt 注
   assert.ok(fs.existsSync(path.join(rd,'materials','analysis','materials','refs.md')),'materials/ 子目录应一并拷入');
   const pp=fs.readFileSync(path.join(rd,'llmwiki','prompt-product.txt'),'utf8');
   assert.ok(pp.includes('materials/analysis/BRIEF.md'),'PRD prompt 应以 BRIEF 为主要输入');
+});
+test('自由文本 build 立项已收口：/api/mission 422 引导走分析台',async()=>{
+  const r=await api('POST','/api/mission',{idea:'做一个记账小工具'});
+  assert.equal(r.code,422);
+  assert.ok((r.body.error||'').includes('Idea PLAN'),'错误信息应引导到分析台');
 });
 test('原型确认闸：prototype 过 → awaiting（停住不跑 architect）+ retry 400',async()=>{
   const ok=await poll(async()=>{
@@ -71,8 +88,9 @@ test('approve go：清 awaiting 续跑 architect→…→交付；完成后 appr
   assert.equal(again.code,400,'非 awaiting run 的 approve 应 400');
 });
 test('awaiting 持久化：重启后 awaiting 不丢',async()=>{
-  // 再开一个 from-plan run 到 awaiting，杀进程重启验证
-  const r=await api('POST','/api/mission/from-plan',{analysisDir:ANDIR,idea:'第二个下传验证持久化'}); // JSON
+  // 新话题再开一个 from-plan run 到 awaiting，杀进程重启验证
+  const ad2=mkGoAnalysis(ANROOT,'第二个话题验证持久化');
+  const r=await api('POST','/api/mission/from-plan',{analysisDir:ad2}); // JSON，idea 回退 meta 真源
   const id2=r.body.id||r.body.runId;assert.ok(id2);
   const ok=await poll(async()=>{const s=await api('GET','/api/state?id='+id2);return s.body.run&&s.body.run.awaiting},25000);
   assert.ok(ok,'第二个 run 应到 awaiting');

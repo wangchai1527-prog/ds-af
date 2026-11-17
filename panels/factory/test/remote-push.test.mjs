@@ -1,8 +1,11 @@
 import {test,after} from 'node:test';import assert from 'node:assert/strict';
 import {spawn} from 'child_process';import fs from 'fs';import path from 'path';import os from 'os';
+import {mkGoAnalysis,approveAllAwaiting} from './lib-plan.mjs';
 // Task 4：项目绑 GitHub 远程 + 交付 best-effort 推送（token 只从 env，绝不落盘）
-const RUND=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-push-'));
-const PROJ=path.join(RUND,'projects.json');fs.writeFileSync(PROJ,'[]');
+const ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-push-'));
+const RUND=path.join(ROOT,'runs');const ANROOT=path.join(ROOT,'analyses');
+fs.mkdirSync(RUND,{recursive:true});fs.mkdirSync(ANROOT,{recursive:true});
+const PROJ=path.join(ROOT,'projects.json');fs.writeFileSync(PROJ,'[]');
 fs.chmodSync(path.resolve('test/mock-agent.mjs'),0o755);
 const TP=String(9050+Math.floor(Math.random()*40));
 const ENVV={...process.env,PORT:TP,RUNDIR:RUND,PROJFILE:PROJ,MAX_CONCURRENT:'1',FACTORY_AGENT_BIN:path.resolve('test/mock-agent.mjs')};
@@ -15,9 +18,10 @@ async function poll(fn,ms=30000,step=300){const t0=Date.now();while(Date.now()-t
 let runId=null;
 
 test('绑远程：非法 URL 400 · 合法 GitHub URL 绑定/解绑',async()=>{
-  const r=await fetch('http://127.0.0.1:'+TP+'/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea:'远程推送验证小工具'})});
+  const r=await fetch('http://127.0.0.1:'+TP+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysisDir:mkGoAnalysis(ANROOT,'远程推送验证小工具')})});
   assert.equal(r.status,200);try{await r.body.cancel()}catch(e){}
-  const ok=await poll(async()=>{const s=await api('GET','/api/projects');return (s.body.projects||[]).length>0&&((s.body.projects[0].runs||[]).length>0)});
+  const ok=await poll(async()=>{await approveAllAwaiting('http://127.0.0.1:'+TP); // 闸放行走到交付才登记项目
+    const s=await api('GET','/api/projects');return (s.body.projects||[]).length>0&&((s.body.projects[0].runs||[]).length>0)},30000);
   assert.ok(ok,'run 应登记项目且挂上 run');
   const projs=(await api('GET','/api/projects')).body.projects;
   const pid=projs[0].id;
@@ -36,7 +40,9 @@ test('绑远程：非法 URL 400 · 合法 GitHub URL 绑定/解绑',async()=>{
   runId=projs[0].runs[0].id; // /api/projects 的 runs 是对象数组
 });
 test('无 token：delivery 后 run 仍 done（push 静默跳过不阻断）',async()=>{
-  const ok=await poll(async()=>{const s=await api('GET','/api/state?id='+runId);return s.body.run&&s.body.run.done},30000);
+  const ok=await poll(async()=>{
+    await approveAllAwaiting('http://127.0.0.1:'+TP); // 原型闸放行后才可能走到交付
+    const s=await api('GET','/api/state?id='+runId);return s.body.run&&s.body.run.done},30000);
   assert.ok(ok,'无 token 推送跳过，全链仍应交付');
 });
-after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(RUND,{recursive:true,force:true})}catch(e){}});
+after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});

@@ -1,8 +1,11 @@
 import {test,after} from 'node:test';import assert from 'node:assert/strict';
 import {spawn} from 'child_process';import fs from 'fs';import path from 'path';import os from 'os';
-// Task 1：多 run 并发执行制（MAX_CONCURRENT=2，mock agent 快速完成）
-const RUND=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-conc-'));
-const PROJ=path.join(RUND,'projects.json');
+import {mkGoAnalysis,approveAllAwaiting} from './lib-plan.mjs';
+// Task 1：多 run 并发执行制（MAX_CONCURRENT=2，mock agent 快速完成）；立项一律走 from-plan 话题
+const ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-conc-'));
+const RUND=path.join(ROOT,'runs');const ANROOT=path.join(ROOT,'analyses');
+fs.mkdirSync(RUND,{recursive:true});fs.mkdirSync(ANROOT,{recursive:true});
+const PROJ=path.join(ROOT,'projects.json');
 fs.writeFileSync(PROJ,'[]');
 fs.chmodSync(path.resolve('test/mock-agent.mjs'),0o755);
 const TP=String(8810+Math.floor(Math.random()*80));
@@ -11,23 +14,18 @@ let child=spawn(process.execPath,['factory-server.js'],{env:ENVV,stdio:'pipe'});
 async function untilUp(){for(let i=0;i<40;i++){try{await fetch('http://127.0.0.1:'+TP+'/api/runs');return}catch(e){await new Promise(r=>setTimeout(r,250))}}throw new Error('server not up')}
 await untilUp();
 const api=async(m,u,b)=>{const r=await fetch('http://127.0.0.1:'+TP+u,{method:m,headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined});return{code:r.status,body:await r.json().catch(()=>({}))}};
-const mission=async idea=>{const r=await fetch('http://127.0.0.1:'+TP+'/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})});
-  const out={code:r.status,body:{}}; // 200 是 NDJSON 流：只收 header 即返回，勿等全量 body
-  if(r.status!==200)out.body=await r.json().catch(()=>({}));else try{await r.body.cancel()}catch(e){}
-  return out};
+const mission=async idea=>{const r=await fetch('http://127.0.0.1:'+TP+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysisDir:mkGoAnalysis(ANROOT,idea)})}); // from-plan 返回 JSON
+  return{code:r.status,body:await r.json().catch(()=>({}))}};
 async function poll(fn,ms=15000,step=300){const t0=Date.now();while(Date.now()-t0<ms){if(await fn())return true;await new Promise(r=>setTimeout(r,step))}return false}
 const idOf=r=>r.body.run&&r.body.run.dir&&path.basename(r.body.run.dir);
 
 test('两 mission 并发在跑 + 第 3 个 409 并发已满',async()=>{
   const a=await mission('建造甲号记账小工具产品');const b=await mission('建造乙号待办清单产品');
   assert.equal(a.code,200);assert.equal(b.code,200); // 旧单例实现此处即 409 factory busy → FAIL
+  const c=await mission('建造丙号天气页产品'); // 立即发：两 run 尚在原型闸前的执行窗内，并发额度应占满
+  assert.equal(c.code,409);assert.equal(c.body.error,'并发已满');
   const ok=await poll(async()=>{const s=await api('GET','/api/state');return (s.body.runs||[]).length>=2});
   assert.ok(ok,'runs[] 应含 2 个并发 run');
-  const s=await api('GET','/api/state');
-  const exec=s.body.runs.filter(r=>r.executing).length;
-  assert.ok(exec>=1,'应有 run 在执行'); // mock 节点很快，宽松断言
-  const c=await mission('建造丙号天气页产品');
-  assert.equal(c.code,409);assert.equal(c.body.error,'并发已满');
 });
 test('按 id 独立寻址 /api/state?id=',async()=>{
   const s=await api('GET','/api/state');
@@ -40,12 +38,13 @@ test('按 id 独立寻址 /api/state?id=',async()=>{
 });
 test('一个 blocked 不影响另一个跑完 + projects 无丢更新',async()=>{
   // 甲 = 含「必阻塞」的 mission → coding 节点写残件 → blocked；乙正常 → 全绿交付
-  await poll(async()=>{const s=await api('GET','/api/state');return (s.body.runs||[]).filter(r=>r.executing).length<2},25000); // 等并发额度空出
+  await poll(async()=>{const s=await api('GET','/api/state');return (s.body.runs||[]).filter(r=>r.executing).length<2},25000); // 等并发额度空出（原型闸 awaiting 即释放）
   const blk=await mission('建造丁号产品 必阻塞 的实验品');assert.equal(blk.code,200);
   const done=await poll(async()=>{
+    await approveAllAwaiting('http://127.0.0.1:'+TP); // 原型闸放行（丁号放行后在 coding 节点才阻塞）
     const s=await api('GET','/api/state');
     const y=s.body.runs.find(r=>r.idea.includes('乙号'));
-    return y&&y.done},20000);
+    return y&&y.done},30000);
   assert.ok(done,'乙号应完成交付');
   const dblk=await poll(async()=>{const s=await api('GET','/api/state');const d=s.body.runs.find(r=>r.idea.includes('丁号'));return d&&d.blocked},20000);
   assert.ok(dblk,'丁号应 blocked');
@@ -73,4 +72,4 @@ test('重启服务 → 全量恢复 paused（不自动续跑、不占并发额�
   const n=await mission('建造戊号恢复后新产品'); // 丁号 paused 不占额度 → 应受理
   assert.equal(n.code,200);
 });
-after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(RUND,{recursive:true,force:true})}catch(e){}});
+after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});

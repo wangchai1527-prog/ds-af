@@ -1,6 +1,9 @@
 import {test,after} from 'node:test';import assert from 'node:assert/strict';
 import {spawn} from 'child_process';import fs from 'fs';import path from 'path';import os from 'os';
-const RUND=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-test-'));
+import {mkGoAnalysis} from './lib-plan.mjs';
+const ROOT=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-test-'));
+const RUND=path.join(ROOT,'runs');const ANROOT=path.join(ROOT,'analyses');
+fs.mkdirSync(RUND,{recursive:true});fs.mkdirSync(ANROOT,{recursive:true});
 const rid='run-99990001';
 fs.mkdirSync(path.join(RUND,rid));
 fs.writeFileSync(path.join(RUND,rid,'nodes.json'),JSON.stringify({idea:'测试项目',flow:'build',nodeStatus:['done','blocked','pending'],ts:1}));
@@ -25,8 +28,8 @@ test('坏 id 拒删',async()=>{
   assert.notEqual(r.body.ok,true);
 });
 test('执行中禁删（executing 标志）',async()=>{
-  // 提交一个 mission 触发 executing（claude 子进程会起，但我们在 mission 受理瞬间删除）
-  const p=fetch('http://127.0.0.1:'+TP+'/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea:'做一个圆面积计算器小工具'})});
+  // 从话题立项触发 executing（claude 子进程会起，但我们在受理瞬间删除）
+  const p=fetch('http://127.0.0.1:'+TP+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysisDir:mkGoAnalysis(ANROOT,'做一个圆面积计算器小工具')})});
   await new Promise(r=>setTimeout(r,1500));
   const st=await api('GET','/api/state');
   if(st.body.run&&st.body.run.dir){
@@ -37,4 +40,4 @@ test('执行中禁删（executing 标志）',async()=>{
   }
   await p.catch(()=>{});
 });
-after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(RUND,{recursive:true,force:true})}catch(e){}});
+after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});

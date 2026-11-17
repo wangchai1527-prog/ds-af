@@ -21,6 +21,9 @@ main{flex:1;display:grid;grid-template-columns:1fr 360px;overflow:hidden}
 #inp:focus{border-color:var(--primary)}
 #send{padding:9px 22px;border-radius:10px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
 #send:disabled{opacity:.5;cursor:wait}
+#antopic{max-width:360px;padding:9px 10px;border:1px solid var(--border);border-radius:10px;font:inherit;outline:none;background:var(--card);color:#1a1a1a}
+#spawn{padding:9px 18px;border-radius:10px;border:0;background:var(--ok);color:#fff;font-weight:600;cursor:pointer}
+#spawn:disabled{opacity:.5;cursor:wait}
 /* 泳道 */
 #lanes{flex:0 0 auto;overflow-y:auto;max-height:46%;padding:10px 20px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
 .lane{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:8px 12px;cursor:pointer}
@@ -85,10 +88,12 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:5px 20p
 <main>
   <div id="left">
     <div id="inputbar">
-      <input id="inp" placeholder="产品想法，例：做一个记账小应用，支持分类统计和月度报表…（多个任务可并行跑）" autocomplete="off">
-      <button id="send">🚀 立项开工</button>
+      <select id="antopic" title="Idea PLAN 分析台已拍板 GO 的话题"></select>
+      <button id="spawn">🚀 选话题立项</button>
+      <input id="inp" placeholder="运维修复工单：问题描述 + 目标仓库绝对路径（如 /root/xxx 页面报错…）" autocomplete="off">
+      <button id="send">🔧 修复开工</button>
     </div>
-    <div id="lanes"><div style="font-size:12px;color:var(--muted)">暂无在管 run —— 输入想法开工，或等待历史 run 恢复</div></div>
+    <div id="lanes"><div style="font-size:12px;color:var(--muted)">暂无在管 run —— 选话题立项或提交修复工单，或等待历史 run 恢复</div></div>
     <div id="detail">
       <div id="dhead"><span class="t" id="dtitle">选择一条泳道查看详情</span><div style="flex:1"></div><span id="dops"></span></div>
       <div id="flow"><div class="ev"><span class="tag stage">START</span><div class="body">并发模型：多个任务并行推进，互不排队；单任务内部仍是节点串行流水线，验收不过即停（⛔）。</div></div></div>
@@ -112,7 +117,7 @@ const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"
 
 /* ===== 看板渲染 ===== */
 function renderLanes(runs){
-  if(!runs||!runs.length){$('lanes').innerHTML='<div style="font-size:12px;color:var(--muted)">暂无在管 run —— 输入想法开工</div>';return}
+  if(!runs||!runs.length){$('lanes').innerHTML='<div style="font-size:12px;color:var(--muted)">暂无在管 run —— 选话题立项或提交修复工单</div>';return}
   $('lanes').innerHTML=runs.map(r=>{
     const st=r.executing?'<span class="st run">▶ 执行中</span>':r.blocked?'<span class="st blk">⛔ 阻断</span>':r.awaiting?'<span class="st blk" style="color:var(--warn);border-color:var(--warn)">⏸ 待确认</span>':r.done?'<span class="st ok">✅ 交付</span>':'<span class="st pau">⏸ 暂停</span>';
     const chips=r.nodes.map((s,i)=>`<span class="chipN ${s}">${ICON[s]||s} ${NODE_NAMES[r.flow]?(NODE_NAMES[r.flow][i]||s):s}</span>`).join('');
@@ -235,7 +240,7 @@ async function tick(){
   }catch(e){}
 }
 window.selectRun=(id,silent)=>{sel=id;selEvents=0;$('flow').innerHTML='';document.querySelectorAll('.lane').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));tick()};
-setInterval(tick,4000);tick();
+setInterval(tick,4000);tick();loadTopics();setInterval(loadTopics,10000);
 /* ===== 操作 ===== */
 window.approveRun=async(id,d)=>{
   let feedback='';
@@ -256,23 +261,49 @@ window.delRun=async id=>{
   if(r.ok&&sel===id){sel=null;selEvents=0;$('flow').innerHTML='';}
   tick();
 };
-async function go(){
+async function go(){ // 运维修复工单（开发立项已收口到分析台话题，见「选话题立项」）
   const idea=$('inp').value.trim();if(!idea)return;
   $('inp').value='';$('send').disabled=true;$('send').textContent='⏳ 提交中…';
   try{
     const r=await fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})});
     if(r.status===422){const e=await r.json();addEv('拒收','stage','⛔ '+e.error,'block-ev')}
     else if(r.status===409){const e=await r.json();addEv('并发满','stage','⛔ '+e.error+' — 稍后再提交或调 MAX_CONCURRENT','block-ev')}
-    else if(r.status===200){addEv('受理','stage','🟢 任务已受理，看板将出现新泳道','stage-ev');
+    else if(r.status===200){addEv('受理','stage','🟢 修复工单已受理，看板将出现新泳道','stage-ev');
       // 轻量读取流首行拿 runId 并立即选中
       const reader=r.body.getReader(),dec=new TextDecoder();const{value}=await reader.read();
       try{await reader.cancel()}catch(e){}
       tick();
     }
   }catch(err){addEv('ERROR','stage',''+err,'block-ev')}
-  $('send').disabled=false;$('send').textContent='🚀 立项开工';
+  $('send').disabled=false;$('send').textContent='🔧 修复开工';
 }
 $('send').onclick=go;$('inp').onkeydown=e=>{if(e.key==='Enter')go()};
+/* ===== 选话题立项（Idea PLAN 已拍板 GO 的话题 → from-plan） ===== */
+async function loadTopics(){
+  try{
+    const d=await(await fetch('/api/analyses')).json();
+    const pool=(d.analyses||[]).filter(a=>a.state==='go'&&!a.spawnedRun);
+    const cur=$('antopic').value;
+    $('antopic').innerHTML=pool.length
+      ?pool.map(a=>`<option value="${esc(a.id)}"${a.id===cur?' selected':''}>${esc(a.id)} · ${esc((a.idea||'').slice(0,40))}</option>`).join('')
+      :'<option value="">（立项池空 —— 去 Idea PLAN 分析台拍板 GO）</option>';
+  }catch(e){}
+}
+window.spawnFromPlan=async()=>{
+  const id=$('antopic').value;if(!id)return;
+  const d=await(await fetch('/api/analyses')).json();
+  const a=(d.analyses||[]).find(x=>x.id===id);if(!a)return;
+  $('spawn').disabled=true;$('spawn').textContent='⏳ 立项中…';
+  try{
+    const r=await fetch('/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({analysisDir:a.dir})});
+    const e=await r.json().catch(()=>({}));
+    if(r.status===200)addEv('受理','stage','🟢 已按话题 '+id+' 立项 '+(e.id||e.runId||'')+'，看板将出现新泳道','stage-ev');
+    else addEv('拒收','stage','⛔ '+(e.error||('HTTP '+r.status)),'block-ev');
+  }catch(err){addEv('ERROR','stage',''+err,'block-ev')}
+  $('spawn').disabled=false;$('spawn').textContent='🚀 选话题立项';
+  loadTopics();tick();
+};
+$('spawn').onclick=spawnFromPlan;
 /* ===== 项目管理 ===== */
 const FLOWN={build:'🟢 立项开发',fix:'🔧 运维修复',iterate:'🔁 迭代开发'};
 const STN={delivered:'✅ 已交付',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
@@ -335,8 +366,6 @@ window.iterRun=id=>{
   const idea=prompt('迭代需求（对 '+id+' 的产品做增量开发，外科式最小改动）：','');
   if(!idea)return;
   showTab('run');
-  fetch('/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea,__iterate:id})}).catch(()=>{});
-  // 走正式迭代接口：
   fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea})}).then(()=>tick());
 };
 window.rbRun=async id=>{
