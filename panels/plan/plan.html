@@ -6,7 +6,7 @@
 <style>
 :root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#7c3aed;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;height:100vh;height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 header{background:var(--card);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;gap:12px;align-items:center;flex-shrink:0}
 #sbt{width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:15px;line-height:1;color:var(--muted);flex-shrink:0}
 #sbt:hover{border-color:var(--primary);color:var(--primary)}
@@ -63,7 +63,7 @@ main{flex:1;display:flex;overflow:hidden}
 .opt.pick{background:var(--primary);color:#fff;border-color:var(--primary)}
 .opt.rec::after{content:' ★推荐';color:var(--warn);font-size:10px}
 .opt.pick.rec::after{color:#fde68a}
-#replybar{border-top:1px solid var(--border);background:var(--card);padding:10px 18px;display:flex;flex-direction:column;gap:8px;flex-shrink:0}
+#replybar{border-top:1px solid var(--border);background:var(--card);padding:10px 18px calc(10px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;flex-shrink:0}
 #msg{width:100%;height:52px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:none;outline:none}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 #send{padding:7px 20px;border-radius:8px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
@@ -74,6 +74,7 @@ main{flex:1;display:flex;overflow:hidden}
 .b.no{background:#fee2e2;color:var(--err);border-color:var(--err)}
 .b.pk{background:#f3f4f6;color:var(--muted);border-color:var(--border)}
 #matrow{display:flex;gap:6px;align-items:center}
+#matToggle{display:none;font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
 #matfn{width:160px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
 #matct{flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
 .mats{font-size:11px;color:var(--muted)}
@@ -91,11 +92,16 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
   #tabs{padding:6px 12px}
   #pane{padding:10px 12px}
   #replybar{padding:10px 12px}
+  #replybar{max-height:48dvh;overflow-y:auto}
+  #msg{height:42px}
+  #matrow{display:none}
+  body.mat-open #matrow{display:flex}
   #matrow{flex-wrap:wrap}
   #matfn{width:120px}
+  #matToggle{display:inline-block}
   .dt{font-size:11.5px}
   .dt th,.dt td{padding:5px 7px}
-  footer{padding:4px 12px;font-size:10.5px}
+  footer{display:none}
 }
 </style>
 </head>
@@ -144,7 +150,7 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
         <div id="matrow">
           <input id="matfn" placeholder="材料文件名.md"><input id="matct" placeholder="粘贴材料内容（可选，随 reply 入 materials/）">
         </div>
-        <div class="row"><button id="send">📨 提交 reply（触发下一轮）</button><span class="mats" id="matlist"></span><span class="mats" id="hint"></span></div>
+        <div class="row"><button id="matToggle" onclick="document.body.classList.toggle('mat-open')">📎 材料</button><button id="send">📨 提交 reply（触发下一轮）</button><span class="mats" id="matlist"></span><span class="mats" id="hint"></span></div>
       </div>
       <div id="events"></div>
     </div>
