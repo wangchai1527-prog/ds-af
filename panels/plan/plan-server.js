@@ -14,7 +14,7 @@ function readMeta(id){const d=path.join(ADIR,id);const m=rf(d,'meta.json');retur
 function writeMeta(d,meta){meta.updated=new Date().toISOString();fs.writeFileSync(path.join(d,'meta.json'),JSON.stringify(meta,null,1))}
 function listAnalyses(){try{return fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')).sort().reverse()
   .map(id=>{const m=rf(path.join(ADIR,id),'meta.json');if(!m)return null;const j=JSON.parse(m);
-    return{id,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated}}).filter(Boolean)}catch(e){return[]}}
+    return{id,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated,submitMode:j.submitMode||'build',spawnedRuns:Array.isArray(j.spawnedRuns)?j.spawnedRuns.length:0}}).filter(Boolean)}catch(e){return[]}}
 
 /* ---------- 历史防重复立项（近 10 条注入 prompt） ---------- */
 function historyBlock(curId){
@@ -129,13 +129,13 @@ const srv=http.createServer(async(req,res)=>{
     return json(res,200,{ok:true,round,state:'open'});
   }
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/decide$/))){
-    const{decision,note}=await body(req);const s=readMeta(m[1]);
+    const{decision,note,submitMode}=await body(req);const s=readMeta(m[1]);
     if(!s)return json(res,404,{error:'会话不存在'});
     if(!['go','no-go','park','withdraw'].includes(decision))return json(res,422,{error:'decision 须为 go|no-go|park|withdraw'});
     if(running.has(m[1]))return json(res,409,{error:'本轮分析进行中，请稍候'});
-    if(decision==='go'){
-      if(!['awaiting','open'].includes(s.meta.state))return json(res,400,{error:'当前状态 '+s.meta.state+' 不能拍板 GO（open/awaiting 均可：收敛后正常拍板，或分析中强制提交）'});
-      s.meta.state='go';s.meta.spawnedRun=null; // GO=提交立项池；真正建 run 由工厂「选话题立项/转修复/转升级」触发并回写 spawnedRun
+    if(decision==='go'){ // 全态可 GO：open/awaiting 正常提交；no-go/park 复活提交（补 revive 日志，不续轮）；go/spawnedRun 再次提交（spawnedRun 保留不覆盖）
+      if(['no-go','park'].includes(s.meta.state))log(s.dir,{ev:'revive',round:s.meta.round});
+      s.meta.state='go';s.meta.submitMode=submitMode==='fix'?'fix':'build'; // 建 run 由工厂「选话题立项」或 dispatch(fix) 触发并回写 spawnedRun
       writeMeta(s.dir,s.meta);log(s.dir,{ev:'decide',decision,note:note||''});
       return json(res,200,{ok:true,state:'go'});
     }
@@ -151,6 +151,15 @@ const srv=http.createServer(async(req,res)=>{
     s.meta.state=decision;writeMeta(s.dir,s.meta);
     log(s.dir,{ev:'decide',decision,note:note||''});
     return json(res,200,{ok:true,state:decision});
+  }
+  if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/rename$/))){ // 话题改名：只动 meta.idea，轮次与其余 meta 字段不变
+    const{title}=await body(req);const s=readMeta(m[1]);
+    if(!s)return json(res,404,{error:'会话不存在'});
+    const t=(title||'').trim();
+    if(!t||t.length>80)return json(res,422,{error:'title 须为 1–80 字'});
+    s.meta.idea=t;writeMeta(s.dir,s.meta); // writeMeta 照常刷新 updated
+    log(s.dir,{ev:'rename',title:t});
+    return json(res,200,{ok:true,idea:t});
   }
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/delete$/))){ // 硬删：磁盘唯一真源，删了即没
     const s=readMeta(m[1]);
@@ -171,7 +180,13 @@ const srv=http.createServer(async(req,res)=>{
     try{
       const r=await fetch(FACTORY+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({analysisDir:s.dir,mode,repo,projectId})});
-      return json(res,r.status,await r.json().catch(()=>({})));
+      const j=await r.json().catch(()=>({}));
+      if(mode==='fix'&&r.ok&&j.runId){ // fix 成功建 run：追加 spawnedRuns[] 历史（无则建；spawnedRun 首值保留不覆盖；build 模式仍由工厂回写，不改）
+        if(!Array.isArray(s.meta.spawnedRuns))s.meta.spawnedRuns=[];
+        s.meta.spawnedRuns.push(j.runId);
+        writeMeta(s.dir,s.meta);log(s.dir,{ev:'dispatch',mode:'fix',runId:j.runId,repo:repo||''});
+      }
+      return json(res,r.status,j);
     }catch(e){return json(res,502,{error:'工厂不可达: '+(e.message||'')})}
   }
   json(res,404,{error:'not found'});
