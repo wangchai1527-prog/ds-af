@@ -101,4 +101,19 @@ test('awaiting 持久化：重启后 awaiting 不丢',async()=>{
   const ok2=await poll(async()=>{const s=await api('GET','/api/state?id='+id2);return s.body.run&&s.body.run.awaiting&&s.body.run.awaiting.gate==='prototype'},15000);
   assert.ok(ok2,'重启后 awaiting 应从 nodes.json 恢复');
 });
+test('混主责合同：qa 属主任务未标 done 不阻断 coding（验收只查 coding 任务）',async()=>{
+  const ad3=mkGoAnalysis(ANROOT,'混主责 验证：合同含 qa 任务 coding 不代标');
+  const r=await api('POST','/api/mission/from-plan',{analysisDir:ad3,idea:'混主责 验证：合同含 qa 任务 coding 不代标'});
+  const id3=r.body.runId;assert.ok(id3);
+  const ok=await poll(async()=>{
+    await api('POST','/api/approve',{id:id3,decision:'go'}).catch(()=>{}); // 放行原型闸
+    const s=await api('GET','/api/state?id='+id3);
+    return s.body.run&&(s.body.run.done||s.body.run.blocked)},40000);
+  assert.ok(ok,'run 应走完或明确 blocked');
+  const s=await api('GET','/api/state?id='+id3);
+  assert.ok(!s.body.run.blocked,'coding 不应因 qa 任务未标 done 而阻断');
+  const codingNode=s.body.run.nodes.find(n=>n.id==='coding');
+  assert.equal(codingNode.status,'done','coding 节点应验收通过');
+  assert.ok((codingNode.acceptDetail||'').includes('coding任务done:2/3'),'验收明细应显示 2/3（qa 任务豁免）');
+});
 after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});

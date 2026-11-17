@@ -8,6 +8,18 @@ const PROJFILE=process.env.PROJFILE||path.join(path.dirname(RUNDIR),'projects.js
 const MAX_CONCURRENT=Math.max(1,parseInt(process.env.MAX_CONCURRENT||'3',10)||3);
 let _runSeq=0;const newRunDir=prefix=>path.join(RUNDIR,prefix+Date.now()+'-'+String(++_runSeq).padStart(2,'0')); // 序号防同毫秒碰撞
 
+// rework-dedup（2026-11-17 人批）：idea 指纹跨话题查重——重做闭环的正确入口是
+// run 卡上的 /api/approve redo（原地重跑原型），不是再立一条 run；同 idea 活动
+// run 已存在 → 409 带既有 id 引导去打回，防双并发烧双份 token。
+const ideaFingerprint=s=>String(s||'').replace(/\s+/g,'').slice(0,120);
+const findActiveByIdea=idea=>{
+  const fp=ideaFingerprint(idea);
+  if(!fp)return null;
+  for(const rs of activeRuns.values())
+    if(!rs.done&&ideaFingerprint(rs.idea)===fp)return rs;
+  return null;
+};
+
 // ===== projects.json 读-改-写串行化（进程内 Promise 链互斥，防并发丢更新） =====
 let _projQ=Promise.resolve();
 function projMutate(fn){ // fn(projs) 原地修改并可返回值；全部排队串行执行
@@ -33,7 +45,15 @@ const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:'+process.e
 const activeRuns=new Map(); // runDir -> runState
 const execCount=()=>[...activeRuns.values()].filter(r=>r.executing).length;
 const latestRun=()=>{let l=null;for(const rs of activeRuns.values())l=rs;return l};
-const findRun=id=>{if(!id)return null;for(const rs of activeRuns.values())if(path.basename(rs.dir)===id)return rs;return null};
+const findRun=id=>{if(!id)return null;
+  for(const rs of activeRuns.values())if(path.basename(rs.dir)===id)return rs;
+  // 磁盘兜底：已交付/历史 run 不在内存，从 runs/ 目录按 id 找（含节点状态恢复为只读快照）
+  if(/^[\w.-]+$/.test(id)){const p=path.join(RUNDIR,id);
+    if(fs.existsSync(p)&&fs.statSync(p).isDirectory()){
+      let st={};try{st=JSON.parse(rf(p,'nodes.json')||'{}')}catch(e){}
+      return{dir:p,idea:st.idea||id,flow:st.flow||'build',nodeStatus:st.nodeStatus||[],acceptDetails:st.acceptDetails||[],events:[],artifacts:listArtifacts(p),done:true,resumed:true,readOnly:true};
+    }}
+  return null};
 
 const j=(r,c,o)=>{r.writeHead(c,{'Content-Type':'application/json; charset=utf-8'});r.end(JSON.stringify(o))};
 // Workspace Standard 1.0
@@ -132,8 +152,8 @@ const NODES=[
  {id:'coding',name:'真实开发',owner:'Coding Agent',entry:'任务合同验收通过',
   prompt:i=>`你是 Coding Agent。读 ../llmwiki/PRD.md、../llmwiki/TechSpec.md、../llmwiki/tasks.json，逐个完成全部 coding 任务：在当前目录（product/ —— 它本身就是独立产品仓库根）真实创建代码文件（index.html 必须存在于当前目录）并用 node 运行能跑的验证。每完成一个任务，把 ../llmwiki/tasks.json 里该 task 加 "status":"done"。遵守 TechSpec 文件结构，零外部依赖，浅色现代风格。完成后回执 [STATUS]/[CHANGES]/[TESTS]。`,
   deliverable:'代码 + tasks.json(status=done)',
-  accept:d=>{const root=findIndexHtmlRoot(d);const idx=root?path.relative(d,root):null;let all=true,n=0;try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));n=t.length;all=t.every(x=>x.status==='done')}catch(e){all=false}
-    return{pass:!!idx&&all,detail:`入口页:${idx||'未找到'} · 任务done:${all?`全部${n}`:'否(未逐个标记)'}`}}},
+  accept:d=>{const root=findIndexHtmlRoot(d);const idx=root?path.relative(d,root):null;let all=true,n=0,mc=0;try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));const mine=t.filter(x=>!x.owner_agent||x.owner_agent==='coding');n=t.length;mc=mine.length;all=mine.every(x=>x.status==='done')}catch(e){all=false}
+    return{pass:!!idx&&all,detail:`入口页:${idx||'未找到'} · coding任务done:${all?mc+'/'+n:'否(未逐个标记)'}`}}},
  {id:'qa',name:'QA 验证',owner:'QA Agent',entry:'开发验收通过（全部任务 done）',
   prompt:i=>`你是 QA/Review Agent（只读代码，可用 node 运行验证，禁止修改代码文件）。对照 PRD.md 验收标准和 tasks.json 逐项检查，能运行的一律真实运行。写 llmwiki/QA-Report.md（中文：逐项 通过/未通过+证据，结论行必须含 PASS、PARTIAL 或 FAIL）。`,
   deliverable:'QA-Report.md',
@@ -173,8 +193,9 @@ function brief(n,inp){
   if(n==='Bash')return '$ '+(inp.command||'').slice(0,90);
   return n;
 }
-function findIndexHtml(dir){ // 产品入口允许在任意子目录
+function findIndexHtml(dir){ // 产品入口允许在任意子目录（index.html 优先，原型 prototype.html 兜底）
   if(rf(dir,'index.html'))return 'index.html';
+  if(rf(dir,'prototype.html'))return 'prototype.html';
   for(const f of fs.readdirSync(dir)){if(f==='.git')continue;const p=path.join(dir,f);
     if(fs.statSync(p).isDirectory()){const r=findIndexHtml(p);if(r)return f+'/'+r}}
   return null;
@@ -346,8 +367,20 @@ http.createServer((req,res)=>{
     const rel=rs?seg.slice(1).join('/'):rest;
     if(!rs)rs=latestRun();
     if(!rs)return res.writeHead(404).end();
+    // preview-asset-root-fix（2026-11-17）：产品在 product/ 子目录时，资产
+    // 相对路径必须挂到同一根下——否则 css/js 全部回退成 index.html（症状：
+    // 预览页裸 HTML 无样式无交互）。
     let file=path.join(rs.dir,rel);
-    if(!rel||!fs.existsSync(file)||fs.statSync(file).isDirectory()){const idx=findIndexHtml(path.join(rs.dir,'runtime'))||findIndexHtml(rs.dir);if(!idx){res.writeHead(404);return res.end('404')}file=path.join(rs.dir,idx)}
+    if(!fs.existsSync(file)||fs.statSync(file).isDirectory()){
+      const root=findIndexHtmlRoot(rs.dir)||rs.dir;
+      const rooted=path.join(root,rel);
+      if(fs.existsSync(rooted)&&!fs.statSync(rooted).isDirectory()){file=rooted}
+      else{
+        const idx=findIndexHtml(root);
+        if(!idx){res.writeHead(404);return res.end('404')}
+        file=path.join(root,idx);
+      }
+    }
     try{return res.end(fs.readFileSync(file))}catch(e){res.writeHead(404);return res.end('404')}
   }
   if(req.method==='GET'&&u.pathname==='/api/state'){
@@ -451,6 +484,8 @@ http.createServer((req,res)=>{
       if(!repo)return j(res,400,{error:'父项目无产品代码，不能迭代'});
       if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
       if(!idea.trim())return j(res,400,{error:'empty idea'});
+      const dup=findActiveByIdea(idea); // rework-dedup
+      if(dup)return j(res,409,{error:'同一 idea 已有活动中的 run '+dup.id+'——重做请用该 run 的原型打回（redo）',runId:dup.id});
       const dir=newRunDir('run-');
       scaffold(dir,'iterate',idea,repo);
       let parentProject=null;
@@ -469,6 +504,8 @@ http.createServer((req,res)=>{
       if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
       const idea=(JSON.parse(body||'{}').idea||'').trim();
       if(!idea)return j(res,400,{error:'empty idea'});
+      const dup=findActiveByIdea(idea); // rework-dedup
+      if(dup)return j(res,409,{error:'同一 idea 已有活动中的 run '+dup.id+'——重做请用该 run 的原型打回（redo）',runId:dup.id});
       const cls=classify(idea);
       if(cls.flow==='research')return j(res,422,{error:cls.reason});
       if(cls.flow==='build')return j(res,422,{error:'开发立项已收口到 Idea PLAN 分析台 —— 话题走完收敛并拍板 GO 后，在本面板「选话题立项」；此入口仅收运维修复工单（问题描述+目标仓库绝对路径）'});
@@ -522,6 +559,8 @@ http.createServer((req,res)=>{
       if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
       const ideaText=((idea||'').trim())||String(am.idea||'').trim(); // idea 可省，回退 meta 真源
       if(!ideaText)return j(res,400,{error:'empty idea'});
+      const dup=findActiveByIdea(ideaText); // rework-dedup：重做走 /api/approve redo，不并排立新
+      if(dup)return j(res,409,{error:'同一 idea 已有活动中的 run '+dup.id+'（节点:'+(dup.stage||'进行中')+'）——重做请在该 run 的原型确认闸选 redo 并附整改意见，勿另立新 run',runId:dup.id});
       const copyAnalysis=dir=>{ // 分析产物随行（BRIEF 为首要输入料）
         const dst=path.join(dir,'materials','analysis');fs.mkdirSync(dst,{recursive:true});
         try{
@@ -581,7 +620,9 @@ http.createServer((req,res)=>{
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
       if(decision==='redo'){
         rs.prototypeFeedback=feedback||'';rs.nodeStatus[idx]='pending';persist(rs);
-        rs.events.push({type:'flow',text:'🔁 原型被打回重做'+(feedback?'（反馈: '+feedback.slice(0,80)+'）':'')});
+        try{fs.mkdirSync(path.join(rs.dir,'llmwiki'),{recursive:true});
+            fs.writeFileSync(path.join(rs.dir,'llmwiki','REDO-feedback.md'),'# 原型打回反馈（'+new Date().toISOString()+'）\n\n'+(feedback||'（无具体意见）')+'\n')}catch(e){}
+        rs.events.push({type:'flow',text:'🔁 原型被打回重做'+(feedback?'（反馈: '+feedback.slice(0,200)+'）':'（⚠️ 无具体意见）')});
         W(res,rs.events[rs.events.length-1]);
         runFrom(rs,idx,res);
       }else{
