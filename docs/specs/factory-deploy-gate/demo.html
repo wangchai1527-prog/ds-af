@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>demo · Factory deploy 闸 · 泳道双态徽章</title>
+<style>
+:root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--ok:#16a34a;--err:#dc2626;--muted:#737373;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:#1a1a1a;font:14px/1.6 -apple-system,"Segoe UI","PingFang SC",sans-serif;padding:24px}
+h1{font-size:16px;margin-bottom:6px}
+p.hint{font-size:12px;color:var(--muted);margin-bottom:18px}
+.lane{border:1px solid var(--border);border-radius:12px;background:var(--card);padding:12px 16px;max-width:640px;margin-bottom:12px}
+.lane .hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.lane .idea{font-size:13px;font-weight:600;flex:1}
+.st{font-size:11px;padding:2px 10px;border-radius:999px;border:1px solid}
+.st.ok{color:var(--ok);border-color:var(--ok)}
+.st.warn{color:#d97706;border-color:#d97706}
+.st.run{color:var(--primary);border-color:var(--primary)}
+.st.blk{color:var(--err);border-color:var(--err)}
+.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.chipN{font-size:10.5px;font-family:var(--mono);border:1px solid var(--border);border-radius:6px;padding:1px 8px;color:var(--muted);background:#fff}
+.chipN.done{border-color:#86efac;color:var(--ok)}
+.chipN.wait{border-color:#fca5a5;color:var(--err);font-weight:700}
+.gatecard{border:1px solid #fca5a5;border-radius:12px;background:#fff5f5;padding:12px 16px;max-width:640px}
+.gatecard b{font-size:13px}
+.gatecard .btns{margin-top:10px;display:flex;gap:8px}
+.btn{font-size:12px;padding:5px 16px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.btn.go{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+.btn.no:hover{background:#f5f5f5}
+.note{font-size:11px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<h1>demo · deploy 闸 — 泳道双态徽章 + 人批卡（方向确认件，数据为示意）</h1>
+<p class="hint">复用原型闸既有 UI（pipeline_awaiting 事件 + /api/approve go|redo），仅新增：①deploy 节点格 ②「未上线」徽章。交互逐项过：闸卡出现即停线；go 后徽章翻「已上线」；redo/未绑远程落「未上线」黄徽章。</p>
+
+<!-- 状态 A：闸等待人批 -->
+<div class="gatecard">
+  <b>⏸ P-016 · 上线人批闸等待确认</b>
+  <div class="note">交付已验收通过。批准 = 推送到已绑定远程（ternaryfox deploy target）；跳过 = 保持「已交付·未上线」，可稍后再推。</div>
+  <div class="btns">
+    <button class="btn go">☁️ 批准上线</button>
+    <button class="btn no">跳过（保持已交付）</button>
+  </div>
+</div>
+<br>
+
+<!-- 状态 B：已交付已上线 -->
+<div class="lane">
+  <div class="hd"><span class="idea">P-016 · ternaryfox 记录契约演示</span><span class="st ok">✅ 已交付 · 已上线</span></div>
+  <div class="chips"><span class="chipN done">prd</span><span class="chipN done">prototype</span><span class="chipN done">coding</span><span class="chipN done">qa</span><span class="chipN done">delivery</span><span class="chipN done">deploy</span></div>
+</div>
+
+<!-- 状态 C：已交付未上线（跳过） -->
+<div class="lane">
+  <div class="hd"><span class="idea">P-015 · xxx</span><span class="st ok">✅ 已交付</span><span class="st warn">⏸ 未上线（人批跳过）</span></div>
+  <div class="chips"><span class="chipN done">delivery</span><span class="chipN">deploy:skip</span></div>
+</div>
+
+<!-- 状态 D：已交付未上线（未绑远程） -->
+<div class="lane">
+  <div class="hd"><span class="idea">P-014 · xxx</span><span class="st ok">✅ 已交付</span><span class="st warn">⏸ 未上线（未绑定远程）</span></div>
+  <div class="chips"><span class="chipN done">delivery</span><span class="chipN">deploy:norepo</span></div>
+</div>
+
+<!-- 状态 E：推送失败 -->
+<div class="lane">
+  <div class="hd"><span class="idea">P-013 · xxx</span><span class="st ok">✅ 已交付</span><span class="st blk">推送失败（可重试）</span></div>
+  <div class="chips"><span class="chipN done">delivery</span><span class="chipN wait">deploy:fail</span></div>
+</div>
+</body>
+</html>

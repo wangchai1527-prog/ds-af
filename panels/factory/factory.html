@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Engineering Factory v2.1 · 并发看板</title>
+<title>Engineering Factory v2.2 · 并发看板 + 部署闭环</title>
 <style>
 :root{--bg:#fafafa;--card:#fff;--border:#e5e5e5;--primary:#2563eb;--muted:#737373;--ok:#16a34a;--warn:#d97706;--err:#dc2626;--mono:ui-monospace,Menlo,monospace}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -37,6 +37,7 @@ main{flex:1;display:grid;grid-template-columns:1fr 360px;overflow:hidden}
 .chipN.done{border-color:#86efac;color:var(--ok)}
 .chipN.running{border-color:var(--primary);color:var(--primary);font-weight:700}
 .chipN.blocked{border-color:var(--err);color:var(--err);font-weight:700}
+.chipN.skipped{border-color:#d4d4d4;color:var(--muted);background:#fafafa}
 .st{font-size:11px;padding:1px 8px;border-radius:999px;border:1px solid}
 .st.run{color:var(--primary);border-color:var(--primary)}
 .st.blk{color:var(--err);border-color:var(--err)}
@@ -92,11 +93,28 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:5px 20p
   #projPanel{padding:10px 12px}
   footer{display:none}
 }
+#rdlg{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:90;display:none;align-items:center;justify-content:center}
+#rdlgbox{background:#fff;border-radius:12px;padding:16px;width:min(440px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.2)}
+#rfd{width:100%;height:110px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:none;outline:none;margin:8px 0}
+#rfd:focus{border-color:var(--warn)}
+/* fm-ui（2026-11-17 规范化）：统一模态表单 + 非阻塞 toast，替代原生 alert/confirm/prompt */
+#fmdlg{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:95;display:none;align-items:center;justify-content:center}
+#fmbox{background:#fff;border-radius:12px;padding:16px;width:min(460px,92vw);box-shadow:0 8px 30px rgba(0,0,0,.2)}
+#fmbox .fm-field{margin:10px 0}
+#fmbox .fm-field label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+#fmbox .fm-field textarea,#fmbox .fm-field input{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;outline:none;box-sizing:border-box}
+#fmbox .fm-field textarea{height:96px;resize:none}
+#fmbox .fm-field textarea:focus,#fmbox .fm-field input:focus{border-color:var(--warn)}
+#fmbox .fm-err{color:var(--err);font-size:12px;margin-top:6px;display:none}
+#fmbox .fm-desc{font-size:12px;color:var(--muted);margin-top:2px}
+#fmtoasts{position:fixed;right:16px;bottom:16px;z-index:120;display:flex;flex-direction:column;gap:8px}
+.fm-toast{background:#fff;border:1px solid var(--border);border-left:4px solid var(--ok,#2e7d32);border-radius:8px;padding:10px 14px;font-size:13px;box-shadow:0 4px 16px rgba(0,0,0,.15);max-width:340px}
+.fm-toast.err{border-left-color:var(--err,#c62828)}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">🏭 Engineering <span>Factory</span> v2.1 · 并发执行制</div>
+  <div class="logo">🏭 Engineering <span>Factory</span> v2.2 · 并发执行制 + 部署闭环</div>
   <span class="badge pool" id="poolBadge">并发 0/3</span>
   <div id="counts"></div>
   <div style="flex:1"></div>
@@ -105,6 +123,15 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:5px 20p
   <div class="ptab" id="tabProj" style="padding:6px 14px;font-size:13px;cursor:pointer;color:var(--muted)">🗂 项目管理</div>
 </header>
 <div id="rtToggle" onclick="document.body.classList.add('rt-open')">📦 产物</div>
+<div id="rdlg"><div id="rdlgbox">
+  <b style="font-size:14px">🔁 打回原型重做</b>
+  <div style="font-size:12px;color:var(--muted);margin-top:2px">反馈将：①写进重做 prompt（Agent 必须照改）②落盘 llmwiki/REDO-feedback.md 可追溯</div>
+  <textarea id="rfd" placeholder="写明修改意见和理由，例如：配色改成深色主题；首页要加统计卡；登录按钮太小…"></textarea>
+  <div style="display:flex;gap:8px;justify-content:flex-end">
+    <button class="mbtn" onclick="closeRdlg()">取消</button>
+    <button class="mbtn" style="border-color:var(--warn);color:var(--warn);font-weight:700" onclick="confirmRedo()">🔁 确认打回</button>
+  </div>
+</div></div>
 <main>
   <div id="left">
     <div id="inputbar">
@@ -134,7 +161,7 @@ new MutationObserver(()=>{const on=document.body.classList.contains('rt-open');d
   if(on&&!window._rtMask){window._rtMask=e=>{if(e.target===document.body||!document.getElementById('right').contains(e.target)&&!document.getElementById('rtToggle').contains(e.target)){document.body.classList.remove('rt-open')}};document.addEventListener('click',window._rtMask)}
   else if(!on&&window._rtMask){document.removeEventListener('click',window._rtMask);window._rtMask=null}
 }).observe(document.body,{attributes:true,attributeFilter:['class']});
-const ICON={pending:'○',running:'⏳',done:'✅',blocked:'⛔',paused:'⏸'};
+const ICON={pending:'○',running:'⏳',done:'✅',blocked:'⛔',paused:'⏸',skipped:'⏭'};
 const TAG={Read:['read','📋'],Write:['write','✍️'],Edit:['write','✍️'],Bash:['run','▶️']};
 let sel=null,selEvents=0,state=null;
 const fmtMs=ms=>ms==null?'':(ms<60000?Math.round(ms/1000)+'s':Math.floor(ms/60000)+'m'+Math.round(ms%60000/1000)+'s');
@@ -153,7 +180,7 @@ function renderLanes(runs){
         <span class="meta">${r.nodeElapsedMs?'⏱ '+fmtMs(r.nodeElapsedMs):''}</span>${la}</div>
       <div class="chips">${chips}</div></div>`}).join('');
 }
-const NODE_NAMES={build:['立项','PRD','原型','方案','拆解','开发','QA','交付'],fix:['工单','勘察','根因','修复','回归','交付'],iterate:['迭代','PRD','拆解','开发','QA','交付']};
+const NODE_NAMES={build:['立项','PRD','原型','方案','拆解','开发','QA','交付','部署'],fix:['工单','勘察','根因','修复','回归','交付'],iterate:['迭代','PRD','拆解','开发','QA','交付','部署']};
 function renderCounts(runs,conc){
   if(conc)$('poolBadge').textContent=`并发 ${conc.executing}/${conc.max}`;
   const c={exec:0,pau:0,blk:0,done:0};
@@ -168,9 +195,14 @@ function addEv(tag,cls,text,extra){
 function opsFor(run){
   if(!run)return'';
   let h='';
-  if(run.awaiting&&!run.executing){
-    h+=`<button class="mbtn" style="border-color:var(--ok);color:var(--ok)" onclick="approveRun('${run.id}','go')">✅ 原型确认 · 放行</button> `;
-    h+=`<button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="approveRun('${run.id}','redo')">🔁 打回重做</button> `;
+  if(run.awaiting&&!run.executing){ // F9：按 awaiting.gate 分流 —— deploy 闸双键（上线|跳过，无 redo）；prototype 闸三键（放行|打回）
+    if(run.awaiting.gate==='deploy'){
+      h+=`<button class="mbtn" style="border-color:var(--ok);color:var(--ok);font-weight:700" onclick="deployGo('${run.id}')">🚀 上线</button> `;
+      h+=`<button class="mbtn" style="border-color:var(--muted);color:var(--muted)" onclick="deploySkip('${run.id}')">⏭ 跳过上线</button> `;
+    }else{
+      h+=`<button class="mbtn" style="border-color:var(--ok);color:var(--ok)" onclick="approveRun('${run.id}','go')">✅ 原型确认 · 放行</button> `;
+      h+=`<button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="approveRun('${run.id}','redo')">🔁 打回重做</button> `;
+    }
   }
   if(run.nodes.some(n=>n.status==='blocked')&&!run.executing)h+=`<button class="mbtn" onclick="retryRun('${run.id}')">👤 重试阻断节点</button> `;
   if(!run.executing)h+=`<button class="mbtn danger" onclick="delRun('${run.id}')">🗑 删除</button> `;
@@ -192,6 +224,7 @@ function renderDetail(run){
       else if(e.type==='node_check')addEv('验收','check',(e.pass?'✅ ':'⛔ ')+(e.deliverable||'')+' — '+e.detail,'check-ev');
       else if(e.type==='pipeline_blocked')addEv('阻断','stage',e.text,'block-ev');
       else if(e.type==='pipeline_awaiting')addEv('确认闸','stage','⏸ '+e.text,'stage-ev');
+      else if(e.type==='deploy')addEv('部署','stage',e.text,'stage-ev');
       else if(e.type==='tool'){const[cls,label]=TAG[e.tool]||['think','💬'];addEv(label,cls,e.brief)}
       else if(e.type==='text')addEv('💬','think',e.text);
       else if(e.type==='all_done')addEv('完成','stage',e.text,'stage-ev');
@@ -267,13 +300,75 @@ async function tick(){
 window.selectRun=(id,silent)=>{sel=id;selEvents=0;$('flow').innerHTML='';document.querySelectorAll('.lane').forEach(e=>e.classList.toggle('sel',e.dataset.id===id));tick()};
 setInterval(tick,4000);tick();loadTopics();setInterval(loadTopics,10000);
 /* ===== 操作 ===== */
-window.approveRun=async(id,d)=>{
-  let feedback='';
-  if(d==='redo'){feedback=prompt('打回原型：反馈会拼进重做 prompt（例如：改成深色主题、首页加统计卡）','')||'';if(feedback===null)return}
-  else if(!confirm('确认原型方向 OK，放行进入技术方案与开发？'))return;
-  const r=await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,decision:d,feedback})});
+window._redoId=null;
+window.openRdlg=id=>{_redoId=id;$('rfd').value='';const e=$('rfderr');if(e)e.style.display='none';$('rdlg').style.display='flex'};
+window.closeRdlg=()=>{$('rdlg').style.display='none'};
+// ===== fm-ui（2026-11-17 规范化）：统一模态表单 + 非阻塞 toast =====
+window.fmToast=(msg,kind)=>{
+  let box=$('fmtoasts');if(!box){box=document.createElement('div');box.id='fmtoasts';document.body.appendChild(box)}
+  const t=document.createElement('div');t.className='fm-toast'+(kind==='err'?' err':'');t.textContent=msg;
+  box.appendChild(t);setTimeout(()=>{t.style.opacity='0';setTimeout(()=>t.remove(),300)},3600);
+};
+window.fmOpen=({title,desc='',fields=[],confirmText='确认',danger=false,onOk})=>{
+  const old=$('fmdlg');if(old)old.remove();
+  const dlg=document.createElement('div');dlg.id='fmdlg';
+  const box=document.createElement('div');box.id='fmbox';
+  let html=`<b style="font-size:14px">${title}</b>`+(desc?`<div class="fm-desc">${desc}</div>`:'');
+  for(const f of fields){
+    html+=`<div class="fm-field"><label>${f.label}${f.required?' *':''}</label>`;
+    html+=f.type==='textarea'?`<textarea id="${f.id}" placeholder="${f.placeholder||''}"></textarea>`
+      :`<input id="${f.id}" type="${f.type||'text'}" placeholder="${f.placeholder||''}" value="${f.value||''}">`;
+    html+=`<div class="fm-err" id="${f.id}-err"></div></div>`;
+  }
+  html+=`<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+    <button class="mbtn" id="fm-cancel">取消</button>
+    <button class="mbtn" id="fm-ok" style="font-weight:700;${danger?'border-color:var(--err);color:var(--err)':'border-color:var(--warn);color:var(--warn)'}">${confirmText}</button></div>`;
+  box.innerHTML=html;dlg.appendChild(box);document.body.appendChild(dlg);
+  dlg.style.display='flex';
+  $('fm-cancel').onclick=()=>dlg.remove();
+  dlg.addEventListener('click',e=>{if(e.target===dlg)dlg.remove()});
+  $('fm-ok').onclick=()=>{
+    const vals={};let bad=null;
+    for(const f of fields){
+      const el=$(f.id);const v=(el.value||'').trim();vals[f.id]=v;
+      const errEl=$(f.id+'-err');
+      if(f.required&&!v){errEl.textContent=(f.label||'此项')+'必填';errEl.style.display='block';bad=bad||f.id}
+      else if(f.maxlen&&v.length>f.maxlen){errEl.textContent='不超过 '+f.maxlen+' 字';errEl.style.display='block';bad=bad||f.id}
+      else if(errEl)errEl.style.display='none';
+    }
+    if(bad)return;
+    dlg.remove();onOk&&onOk(vals);
+  };
+  const first=fields[0]&&$(fields[0].id);if(first)first.focus();
+};
+window.confirmRedo=async()=>{
+  const feedback=$('rfd').value.trim();
+  if(!feedback){const e=$('rfderr');if(e){e.textContent='请填写修改意见和理由（不打回原因无从改起）';e.style.display='block'}return}
+  closeRdlg();
+  const r=await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:_redoId,decision:'redo',feedback})});
   if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('确认闸','stage','⛔ '+(e.error||'失败'),'block-ev');return}
-  addEv('确认闸','stage',d==='go'?'✅ 已放行':'🔁 已打回重做','stage-ev');tick();
+  addEv('确认闸','stage','🔁 已打回重做 — 反馈已入 prompt + 落盘 REDO-feedback.md','stage-ev');tick();
+};
+window.approveRun=async(id,d)=>{
+  if(d==='redo'){openRdlg(id);return}
+  fmOpen({title:'✅ 确认原型放行',desc:'原型方向 OK → 进入技术方案与开发（该节点之后按流水线推进）',confirmText:'放行',onOk:()=>_approveDo(id,'go')});
+};
+window._approveDo=async(id,decision,feedback='')=>{
+  const r=await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,decision,feedback})});
+  if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('确认闸','stage','⛔ '+(e.error||'失败'),'block-ev');return}
+  addEv('确认闸','stage',decision==='go'?'✅ 已放行':'🔁 已打回重做','stage-ev');tick();
+};
+// ===== F9：部署闸操作（go=上线 /apps，skip=delivered 收尾；无 redo） =====
+window.deployGo=id=>{
+  fmOpen({title:'🚀 上线部署',desc:'交付物将发布到稳定地址 /apps/<项目>/ — 人工拍板后生效（版本可回退、地址不变）',confirmText:'确认上线',onOk:()=>_deployDo(id,'go')});
+};
+window.deploySkip=id=>{
+  fmOpen({title:'⏭ 跳过上线',desc:'run 以 delivered 收尾：产物在 run 目录交付，不上 /apps；后续可在项目卡「补办部署」',confirmText:'跳过',onOk:()=>_deployDo(id,'skip')});
+};
+window._deployDo=async(id,decision)=>{
+  const r=await fetch('/api/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,decision})});
+  if(r.status!==200){const e=await r.json().catch(()=>({}));addEv('部署闸','stage','⛔ '+(e.error||'失败'),'block-ev');return}
+  addEv('部署闸','stage',decision==='go'?'🚀 已上线 — 稳定地址见项目卡部署区':'⏭ 已跳过上线（delivered 收尾，可补办）','stage-ev');tick();
 };
 window.retryRun=async id=>{
   const r=await fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
@@ -281,10 +376,31 @@ window.retryRun=async id=>{
   addEv('重试','stage','👤 已触发重试','stage-ev');tick();
 };
 window.delRun=async id=>{
-  if(!confirm('彻底删除 '+id+'（含代码与证据，不可恢复）？'))return;
+  fmOpen({title:'🗑 彻底删除 '+id,desc:'含代码与证据，不可恢复。',confirmText:'确认删除',danger:true,onOk:()=>_delRunDo(id)});
+};
+window._delRunDo=async id=>{
   const r=await(await fetch('/api/runs/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  if(r.error){fmToast('删除被拒：'+r.error,'err');return} // S8：deployed 指针引用 409 等，弹提示不静默
   if(r.ok&&sel===id){sel=null;selEvents=0;$('flow').innerHTML='';}
   tick();
+};
+// ===== F9：部署区操作（补办 / 回退 / 复制地址） =====
+window.copyUrl=(btn,u)=>{
+  const done=()=>fmToast('地址已复制：'+u);
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(u).then(done).catch(()=>{btn.previousElementSibling&&btn.previousElementSibling.select();document.execCommand&&document.execCommand('copy');done()});
+  else{btn.previousElementSibling&&btn.previousElementSibling.select();document.execCommand&&document.execCommand('copy');done()}
+};
+window.deployProject=async id=>{
+  fmOpen({title:'➕ 补办部署',desc:'将项目最新 delivered 的 run 发布到 /apps/'+id+'/（未上线则上线；已上线则切到该版本）',confirmText:'补办部署',onOk:async()=>{
+    const r=await(await fetch('/api/projects/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId:id})})).json();
+    if(r.error)fmToast('补办失败：'+r.error,'err');else{fmToast('已部署 '+r.deployed.runId+' → '+r.url);loadRuns()}
+  }});
+};
+window.rollbackDeploy=async(pid,rid)=>{
+  fmOpen({title:'↩️ 回退部署版本',desc:'把 /apps/'+pid+'/ 指向 '+rid+'（切 deployed 指针，不动 run 内 git —— 与 run 级「回滚」不同）',confirmText:'回退到此版本',onOk:async()=>{
+    const r=await(await fetch('/api/projects/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId:pid,runId:rid})})).json();
+    if(r.error)fmToast('回退失败：'+r.error,'err');else{fmToast('已回退到 '+r.deployed.runId+' → '+r.url);loadRuns()}
+  }});
 };
 async function go(){ // 运维修复工单（开发立项已收口到分析台话题，见「选话题立项」）
   const idea=$('inp').value.trim();if(!idea)return;
@@ -331,7 +447,33 @@ window.spawnFromPlan=async()=>{
 $('spawn').onclick=spawnFromPlan;
 /* ===== 项目管理 ===== */
 const FLOWN={build:'🟢 立项开发',fix:'🔧 运维修复',iterate:'🔁 迭代开发'};
-const STN={delivered:'✅ 已交付',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
+const STN={delivered:'✅ 已交付',deployed:'🚀 已上线',blocked:'⛔ 阻断中',running:'▶️ 执行中',paused:'⏸ 暂停'};
+// ===== F9：项目卡部署状态区（仅 build/iterate 项目；fix 项目走 run 目录交付，不上 /apps） =====
+function deployArea(p){
+  const d=p.deployed;
+  const hist=(d&&d.history||[]).slice(0,3);
+  const url=location.origin+'/apps/'+p.id+'/';
+  return `<div style="margin-top:10px;border:1px solid #dbeafe;background:#f8fbff;border-radius:10px;padding:10px 12px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:12.5px">🚀 部署</b>
+      ${d?'<span class="st ok">🚀 已上线</span>':'<span style="font-size:11px;color:var(--muted)">未上线</span>'}
+      <div style="flex:1"></div>
+      <button class="mbtn" style="border-color:var(--ok);color:var(--ok)" onclick="deployProject('${p.id}')">➕ 补办部署</button>
+    </div>
+    ${d?`<div style="font-size:11.5px;color:var(--muted);margin-top:6px;font-family:var(--mono)">当前版本: ${esc(d.runId)} · ${new Date(d.ts).toLocaleString()}</div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+      <input readonly value="${esc(url)}" style="flex:1;min-width:200px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--mono);background:#fff">
+      <button class="mbtn" onclick="copyUrl(this,'${esc(url)}')">📋 复制</button>
+      <button class="mbtn" onclick="window.open('/apps/${p.id}/','_blank')">👁 访问</button>
+    </div>
+    ${hist.length?'<div style="margin-top:6px;font-size:11px;color:var(--muted)">历史版本（最近 3 条）：</div>'+hist.map(h=>`
+      <div style="display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted);margin-top:3px;flex-wrap:wrap">
+        <span style="font-family:var(--mono)">${esc(h.runId)}</span>
+        <span>${h.action==='rollback'?'↩️ 回退至此':'🚀 上线'} · ${new Date(h.ts).toLocaleString()}</span>
+        <div style="flex:1"></div>
+        ${d.runId===h.runId?'<span style="color:var(--ok);font-weight:700">● 当前</span>':`<button class="mbtn" onclick="rollbackDeploy('${p.id}','${h.runId}')">↩️ 回退到此版本</button>`}
+      </div>`).join(''):''}`:''}
+  </div>`;
+}
 async function loadRuns(){
   try{
     const d=await(await fetch('/api/projects')).json();
@@ -344,16 +486,17 @@ async function loadRuns(){
           <span style="font-size:11px;color:var(--muted)">📊 ${(p.runs||[]).length} 个任务</span></div>
         <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
         ${(p.runs||[]).map(r=>`
-          <div style="display:flex;align-items:center;gap:8px;border-left:3px solid ${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--border)'};padding:4px 10px;background:#fafafa;border-radius:6px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px;border-left:3px solid ${r.status==='delivered'||r.status==='deployed'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--border)'};padding:4px 10px;background:#fafafa;border-radius:6px;flex-wrap:wrap">
             <span style="font-family:var(--mono);font-size:11.5px">${r.id}</span>
             <span style="font-size:11px;color:var(--muted)">${FLOWN[r.flow]||r.flow}</span>
-            <span style="font-size:11px;color:${r.status==='delivered'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
+            <span style="font-size:11px;color:${r.status==='delivered'||r.status==='deployed'?'var(--ok)':r.status==='blocked'?'var(--err)':'var(--muted)'}">${STN[r.status]||r.status}</span>
             <span style="font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((r.idea||'').slice(0,40))}</span>
-            ${r.flow==='build'&&r.status==='delivered'?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁迭代</button>
+            ${r.flow!=='fix'&&(r.status==='delivered'||r.status==='deployed')?`<button class="mbtn" style="border-color:var(--primary);color:var(--primary)" onclick="iterRun('${r.id}')">🔁迭代</button>
             <button class="mbtn" style="border-color:var(--warn);color:var(--warn)" onclick="rbRun('${r.id}')">↩️回滚</button>`:''}
             <button class="mbtn" style="border-color:var(--err);color:var(--err)" onclick="delRun('${r.id}')">🗑删任务</button>
           </div>`).join('')||'<div style="font-size:12px;color:var(--muted)">（无任务记录）</div>'}
         </div>
+        ${(p.runs||[]).some(r=>r.flow!=='fix')?deployArea(p):'<div style="margin-top:8px;font-size:11px;color:var(--muted);background:#fafafa;border:1px dashed var(--border);border-radius:8px;padding:6px 10px">ℹ️ fix 类项目：产物在 run 目录交付（git 提交），不走 /apps 部署</div>'}
         <div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           <input id="rm-${p.id}" value="${esc(p.remote||'')}" placeholder="https://github.com/user/repo（绑远程后交付自动推送）" style="flex:1;min-width:220px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--mono)">
           <button class="mbtn" onclick="bindRemote('${p.id}')">🔗 绑远程</button>
@@ -372,7 +515,7 @@ async function loadRuns(){
 }
 window.lintWs=async()=>{
   const r=await(await fetch('/api/workspace/check')).json().catch(()=>({ok:null}));
-  if(r.ok===null){alert('巡检接口不可达');return}
+  if(r.ok===null){fmToast('巡检接口不可达','err');return}
   if(r.ok){addEv('巡检','stage','🧹 目录规范巡检通过（0 issue）','stage-ev');return}
   addEv('巡检','stage','🧹 巡检发现 '+r.issues.length+' 个目录规范问题：','stage-ev');
   for(const i of r.issues)addEv('问题','check',i.where+' — '+i.what,'block-ev');
@@ -380,21 +523,23 @@ window.lintWs=async()=>{
 window.bindRemote=async(id,clear)=>{
   const remote=clear?'':(document.getElementById('rm-'+id).value.trim());
   const r=await(await fetch('/api/projects/remote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,remote})})).json().catch(()=>({}));
-  if(r.error)alert('绑定失败：'+r.error);else{alert(remote?'已绑定 '+remote:'已解绑');loadRuns()}
+  if(r.error)fmToast('绑定失败：'+r.error,'err');else{fmToast(remote?'已绑定 '+remote:'已解绑');loadRuns()}
 };
 window.delProj=async(id,n)=>{
-  if(!confirm('删除项目 '+id+'：将删除 '+n+' 个任务与产品代码，不可恢复。确认？'))return;
+  fmOpen({title:'🗑 删除项目 '+id,desc:'将删除 '+n+' 个任务与产品代码，不可恢复。',confirmText:'确认删除',danger:true,onOk:()=>_delProjDo(id)});
+};
+window._delProjDo=async id=>{
   const r=await(await fetch('/api/projects/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})})).json();
+  if(r.error){fmToast('删除被拒：'+r.error,'err');return} // S8 前置校验提示外显
   loadRuns();tick();
 };
 window.iterRun=id=>{
-  const idea=prompt('迭代需求（对 '+id+' 的产品做增量开发，外科式最小改动）：','');
-  if(!idea)return;
-  showTab('run');
-  fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea})}).then(()=>tick());
+  fmOpen({title:'🔁 迭代需求',desc:'对 '+id+' 的产品做增量开发（外科式最小改动）',confirmText:'发起迭代',fields:[{id:'iter-idea',label:'迭代需求',type:'textarea',required:true,maxlen:500,placeholder:'写明要增改的功能与边界…'}],onOk:v=>{showTab('run');fetch('/api/runs/iterate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,idea:v['iter-idea']})}).then(()=>tick())}});
 };
 window.rbRun=async id=>{
-  if(!confirm('回滚 '+id+' 的最近一次 git 提交？(git revert，可再撤回)'))return;
+  fmOpen({title:'↩ 回滚 '+id,desc:'git revert 最近一次提交（revert 本身可再撤回）',confirmText:'确认回滚',danger:true,onOk:()=>_rbDo(id)});
+};
+window._rbDo=async id=>{
   await fetch('/api/runs/rollback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
   loadRuns();
 };

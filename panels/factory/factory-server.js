@@ -35,11 +35,25 @@ function loadProjects(){ // 损坏→重建空索引，不崩溃
   try{fs.writeFileSync(PROJFILE,'[]')}catch(e){}
   return [];
 }
-function saveProjects(p){fs.writeFileSync(PROJFILE,JSON.stringify(p,null,1))}
+function saveProjects(p){ // F11（T4/T6）：tmp+rename 原子写，断电/崩溃防护
+  const tmp=PROJFILE+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify(p,null,1));
+  fs.renameSync(tmp,PROJFILE);
+}
 function newProject(name,repo){return projMutate(p=>{const proj={id:'P-'+String(p.length+1).padStart(3,'0'),name,repo,created:new Date().toISOString(),runs:[]};p.push(proj);return proj})}
 function attachRun(projId,runId,name,repo){return projMutate(p=>{let pr=p.find(x=>x.id===projId);
   if(!pr){pr={id:projId,name:name||runId,repo:repo||null,created:new Date().toISOString(),runs:[]};p.push(pr)}
   if(!pr.runs.includes(runId))pr.runs.push(runId)})}
+// S6（T3）deployed 记账：只写 projects.json 指针，不动 run 目录；走 projMutate 串行化；history 头插裁尾 20；外层保持裸数组
+function recordDeploy(projId,runId,action){
+  if(!projId)return Promise.resolve(null);
+  return projMutate(p=>{const pr=p.find(x=>x.id===projId);if(!pr)return null;
+    const ts=Date.now();
+    const history=[{runId,ts,action:action||'deploy'},...((pr.deployed&&pr.deployed.history)||[])].slice(0,20);
+    pr.deployed={runId,ts,history};
+    return pr.deployed});
+}
+function findProjectByRun(runId){try{return((loadProjects().find(p=>(p.runs||[]).includes(runId))||{}).id)||null}catch(e){return null}}
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:'+process.env.PATH};
 // ===== 并发池：run 全局单例已废除 =====
 const activeRuns=new Map(); // runDir -> runState
@@ -56,6 +70,8 @@ const findRun=id=>{if(!id)return null;
   return null};
 
 const j=(r,c,o)=>{r.writeHead(c,{'Content-Type':'application/json; charset=utf-8'});r.end(JSON.stringify(o))};
+// F11（T4/T6）：服务端外插 HTML 一律转义（/apps 503 文案页等），修复参考实现已知 XSS 面
+const escapeHtml=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Workspace Standard 1.0
 function scaffold(dir,flow,idea,repo){
   for(const d of ['loop','llmwiki','runtime','skills','plugins','product'])fs.mkdirSync(path.join(dir,d),{recursive:true});
@@ -119,6 +135,10 @@ const ITERNODES=[
   prompt:(i,rs)=>`你是 DevOps Agent。在目标仓库 ${rs.repo} 执行 git add -A && git commit -m "iterate: 增量交付 v+（保持外科式边界）"。写 llmwiki/DELIVERY.md（增量摘要/改动文件/回归结果）。不改代码。`,
   accept:(d,rs)=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let ok=false;try{ok=execSync('git -C '+rs.repo+' log --oneline -1',{encoding:'utf8',env:ENV}).includes('iterate')}catch(e){}
     return{pass:!!c&&ok,detail:'DELIVERY.md:'+!!c+' · iterate提交:'+ok}}},
+ // S1（T2）iterate 链末同样追加 deploy 人工闸（fix 链不追加 —— D1 默认案：整改诉求由 build/iterate 覆盖，改动面最小）
+ {id:'deploy',name:'部署上线',owner:'👤 人',entry:'交付完成 — 人工拍板（go=上线 /apps，skip=delivered 收尾）',
+  prompt:null,deliverable:'deployed 记账 + /apps/<projectId>/ 稳定地址',
+  accept:(d,rs)=>({pass:true,detail:'deploy 闸：人工拍板（/api/approve go|skip）'})},
 ];
 function findIndexHtmlRoot(dir){ // 返回含 index.html 的最近目录（product/ 优先，旧布局 runtime/ 兼容）
   if(!dir)return null;
@@ -163,6 +183,11 @@ const NODES=[
   deliverable:'DELIVERY.md + product/ 内 git 提交',
   accept:d=>{const c=rf(path.join(d,'llmwiki'),'DELIVERY.md');let commits='';try{commits=execSync('git -C '+path.join(d,'product')+' log --oneline',{encoding:'utf8',env:ENV}).trim()}catch(e){}
     return{pass:!!c&&commits.includes('delivery'),detail:`DELIVERY.md:${!!c} · product/git提交:${commits.split('\n').length} 条`}}},
+ // S1（T2）deploy 人工闸节点：👤 人拍板、无 executor（prompt:null 不派 agent）、decision 取 go|skip、无 redo；
+ // 状态由 /api/approve 按 gate 分流写入（go=done / skip=skipped），不走 runFrom 常规验收。
+ {id:'deploy',name:'部署上线',owner:'👤 人',entry:'交付完成 — 人工拍板（go=上线 /apps，skip=delivered 收尾）',
+  prompt:null,deliverable:'deployed 记账 + /apps/<projectId>/ 稳定地址',
+  accept:(d,rs)=>({pass:true,detail:'deploy 闸：人工拍板（/api/approve go|skip）'})},
 ];
 
 function claudeStream(prompt,cwd,onEvent,onDone){
@@ -215,6 +240,23 @@ function listArtifacts(dir){
 }
 // ===== runState 纯函数化（不再引用全局单例） =====
 const flowNodes=flow=>flow==='fix'?FIXNODES:(flow==='iterate'?ITERNODES:NODES);
+// S5（T1）终态两态判定：全节点 ∈ {done,skipped} 且无 blocked = 终态；末位 deploy=done → deployed，
+// =skipped（或历史 run 无 deploy 节点）→ delivered。旧式「末位 done」判定在 deploy·skip 后会把
+// run 误判 paused / 捞回并发池，故 4 个判定点（/api/projects、/api/runs、restoreRun、/api/projects/deploy
+// 目标校验）统一走本函数，禁止再写末位判定。
+function runStatusOf(nodeStatus,flow){
+  const ns=nodeStatus||[];
+  const blocked=ns.includes('blocked');
+  const terminal=ns.length>0&&!blocked&&ns.every(s=>s==='done'||s==='skipped');
+  let status='paused';
+  if(blocked)status='blocked';
+  else if(terminal){
+    const chain=flowNodes(flow);
+    const hasDeploy=chain.length>0&&chain[chain.length-1].id==='deploy'&&ns.length===chain.length;
+    status=(hasDeploy&&ns[ns.length-1]==='done')?'deployed':'delivered';
+  }else if(ns.includes('running'))status='running';
+  return{blocked,terminal,status};
+}
 function nodeState(rs){const ns=flowNodes(rs.flow);return ns.map((n,i)=>({id:n.id,name:n.name,owner:n.owner,entry:n.entry,deliverable:n.deliverable,status:rs.nodeStatus[i],acceptDetail:rs.acceptDetails[i]||null}))}
 function persist(rs){if(rs)fs.writeFileSync(path.join(rs.dir,'nodes.json'),JSON.stringify({idea:rs.idea,flow:rs.flow,nodeStatus:rs.nodeStatus,acceptDetails:rs.acceptDetails,gate:rs.gate||undefined,awaiting:rs.awaiting||undefined,ts:Date.now()},null,1))}
 function summarize(rs){const cur=nodeState(rs).find(n=>n.status==='running');
@@ -231,11 +273,17 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
     const f=rf(dir,'nodes.json');if(!f)return null;
     const st=JSON.parse(f);
     const ns=(st.nodeStatus||[]).map(s=>s==='running'?'blocked':s); // 重启中断的 running → blocked（可重试续跑）
-    if(ns.length&&ns[ns.length-1]==='done'&&!ns.includes('blocked'))return null; // 已完整交付，不占并发池
+    if(runStatusOf(ns,st.flow).terminal)return null; // S5 判定点③：终态（含 deploy·skip 的 delivered 与 deployed）不捞回并发池
+    // S2（T2）恢复 awaiting-deploy：闸持久化在 nodes.json，重启后照常恢复且 executing=false（不被捞回并发池）；
+    // 极端态自愈——delivery 已 done 但 deploy 仍 pending 且无 awaiting 记录（如旧版中断）→ 补挂 deploy 闸防卡死。
+    const chain=flowNodes(st.flow||'build');
+    let awaiting=st.awaiting||null;
+    if(!awaiting&&chain.length&&chain[chain.length-1].id==='deploy'&&ns.length===chain.length&&ns[ns.length-1]==='pending')
+      awaiting={gate:'deploy',nodeIdx:ns.length-1};
     let repo=null;try{repo=(JSON.parse(rf(dir,'manifest.json')||'{}').repo)||null}catch(e){}
     const rs={dir,id:path.basename(dir),idea:st.idea||'(未知)',flow:st.flow||'build',repo,parentProject:null,stage:null,
       nodeStatus:ns,acceptDetails:(st.acceptDetails||[]).map((a,i)=>ns[i]==='blocked'&&!a?'⛔ 服务重启中断，可重试续跑':a),
-      gate:!!st.gate,awaiting:st.awaiting||null,
+      gate:!!st.gate,awaiting,
       events:[],artifacts:listArtifacts(dir),done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null,resumed:true};
     persist(rs);
     return rs;
@@ -348,6 +396,14 @@ function runFrom(rs,idx,res){
         emit({type:'pipeline_awaiting',node:n.id,text:'⏸ 原型已就绪 — 等待人工确认（确认通过 /api/approve go，打回重做 /api/approve redo）'});
         if(res)res.end();return;
       }
+      if(a.pass&&n.id==='delivery'&&(rs.flow==='build'||rs.flow==='iterate')){ // S2（T2）：交付通过 → deploy 人工闸（👤 上线|跳过；闸期间 executing=false 不占并发池，与 prototype 闸同构；fix 链不设）
+        const chain=flowNodes(rs.flow);
+        if(chain[idx+1]&&chain[idx+1].id==='deploy'){
+          rs.awaiting={gate:'deploy',nodeIdx:idx+1};rs.executing=false;persist(rs);
+          emit({type:'pipeline_awaiting',node:'deploy',text:'🚀 交付已就绪 — 等待人工拍板上线（上线 /api/approve go，跳过 /api/approve skip；无打回重做）'});
+          if(res)res.end();return;
+        }
+      }
       idx++;setTimeout(step,600);
     }
   };
@@ -359,6 +415,35 @@ http.createServer((req,res)=>{
   if(req.method==='OPTIONS'){res.writeHead(204);return res.end()}
   const u=new URL(req.url,'http://x');
   if(req.method==='GET'&&u.pathname==='/'){res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end(fs.readFileSync(path.join(__dirname,'factory.html')))}
+  if(req.method==='GET'&&u.pathname.startsWith('/apps/')){ // S4（T4）：稳定路由 /apps/<projectId>/ —— 懒校验，地址随版本演进不变；产物寻址复用 findIndexHtmlRoot 支持子目录资产（与 /preview 同构，D3）
+    const seg=decodeURIComponent(u.pathname.slice(6)).split('/').filter(Boolean);
+    const apps503=(title,detail)=>{res.writeHead(503,{'Content-Type':'text/html; charset=utf-8'});res.end( // 503 文案页：外插值全走 escapeHtml（F11）
+      '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+escapeHtml(title)+'</title>'+
+      '<style>body{font:14px/1.7 -apple-system,"Segoe UI","PingFang SC",sans-serif;background:#fafafa;color:#1a1a1a;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}'+
+      '.card{background:#fff;border:1px solid #e5e5e5;border-radius:14px;padding:32px 36px;max-width:540px;box-shadow:0 4px 18px rgba(0,0,0,.05)}h1{font-size:18px;margin:0 0 8px}p{color:#737373;margin:6px 0}code{background:#f5f5f5;border-radius:5px;padding:1px 6px;font-family:ui-monospace,monospace;font-size:12.5px}</style></head><body>'+
+      '<div class="card"><h1>'+escapeHtml(title)+'</h1><p>'+escapeHtml(detail)+'</p></div></body></html>')};
+    const pr=loadProjects().find(x=>x.id===seg[0]);
+    if(!pr)return apps503('未上线','项目 '+(seg[0]||'')+' 不存在（或已删除）。');
+    const dep=pr.deployed;
+    if(!dep||!dep.runId||!/^[\w.-]+$/.test(dep.runId)) // 分支①：未上线
+      return apps503('未上线','「'+pr.name+'」还没有已部署版本 —— 在工厂面板项目卡「上线 / 补办部署」后，本地址即可访问（地址随版本演进不变）。');
+    const runDir=path.join(RUNDIR,dep.runId);
+    const root=fs.existsSync(runDir)?findIndexHtmlRoot(runDir):null;
+    if(!root) // 分支②：部署中 / 产物异常
+      return apps503('部署中 / 产物异常','版本 '+dep.runId+' 的产物缺失 —— 请检查 run 目录或重新部署（/api/projects/deploy）。');
+    // 分支③：指针有效（含回退到历史版本）→ 正常伺服该 run 产物；子目录资产挂同根
+    const rel=seg.slice(1).join('/');
+    let file=path.join(root,rel);
+    if(!rel||!fs.existsSync(file)||fs.statSync(file).isDirectory()){
+      const idx=rf(root,'index.html')?'index.html':(rf(root,'prototype.html')?'prototype.html':null);
+      if(!idx)return apps503('部署中 / 产物异常','版本 '+dep.runId+' 缺少 index.html。');
+      file=path.join(root,idx);
+    }
+    try{
+      if(!rel)res.setHeader('Content-Type','text/html; charset=utf-8');
+      return res.end(fs.readFileSync(file));
+    }catch(e){return apps503('部署中 / 产物异常','版本 '+dep.runId+' 产物读取失败。')}
+  }
   if(req.method==='GET'&&u.pathname.startsWith('/preview/')){
     // 新寻址 /preview/<runId>/<rel>；旧式 /preview/<rel> 回退最近活动 run
     const rest=decodeURIComponent(u.pathname.slice(9))||'';
@@ -405,9 +490,7 @@ http.createServer((req,res)=>{
         const p=path.join(RUNDIR,id);
         let meta={idea:'',flow:'build',nodeStatus:[]};
         try{meta=JSON.parse(rf(p,'nodes.json')||'{}')}catch(e){}
-        const blocked=(meta.nodeStatus||[]).includes('blocked');
-        const done=(meta.nodeStatus||[]).length&&meta.nodeStatus[meta.nodeStatus.length-1]==='done'&&!blocked;
-        return{id,idea:meta.idea||'',flow:meta.flow||'build',status:blocked?'blocked':(done?'delivered':'paused'),exists:fs.existsSync(p)};
+        return{id,idea:meta.idea||'',flow:meta.flow||'build',status:runStatusOf(meta.nodeStatus,meta.flow).status,exists:fs.existsSync(p)}; // S5 判定点①
       })}));
     return j(res,200,{projects:out});
   }
@@ -420,15 +503,47 @@ http.createServer((req,res)=>{
         if(!fs.statSync(p).isDirectory()||!d.startsWith('run-')&&!d.startsWith('fix-'))continue;
         let meta={idea:'(未知)',flow:'build',nodeStatus:[]};
         try{meta=JSON.parse(rf(p,'nodes.json')||'{}')}catch(e){}
-        const blocked=(meta.nodeStatus||[]).includes('blocked');
-        const done=(meta.nodeStatus||[]).length&&meta.nodeStatus[meta.nodeStatus.length-1]==='done'&&!blocked;
         list.push({id:d,idea:meta.idea||'',flow:meta.flow||'build',ts:meta.ts||0,
-          status:blocked?'blocked':(done?'delivered':((meta.nodeStatus||[]).includes('running')?'running':'paused')),
+          status:runStatusOf(meta.nodeStatus,meta.flow).status, // S5 判定点②
           nodes:meta.nodeStatus||[]});
       }
     }catch(e){}
     const act=[...activeRuns.values()].map(summarize);
     return j(res,200,{runs:list,active:act.length?act.map(r=>r.id):null});
+  }
+  if(req.method==='POST'&&u.pathname==='/api/projects/deploy'){ // S7（T4）：补办部署与版本回退合一 —— 缺省 runId=补办最新 delivered；显式历史 runId=切 deployed 指针（回退）。与 /api/runs/rollback（run 内 git revert）语义不同、并存（D2）
+    let b='';req.on('data',c=>b+=c);req.on('end',()=>{
+      let q;try{q=JSON.parse(b||'{}')}catch(e){return j(res,400,{error:'bad json'})}
+      projMutate(p=>{ // 只切 projects.json 指针，不动 run 目录（readOnly/纯磁盘 run 可操作）
+        const pr=p.find(x=>x.id===(q.projectId||''));
+        if(!pr)return{code:404,error:'no project'};
+        let target=q.runId||'';
+        if(!target){ // 补办：最新 delivered（终态、未上线收尾）run；fix 流不走 /apps
+          for(const rid of [...(pr.runs||[])].reverse()){
+            let meta={flow:'build',nodeStatus:[]};
+            try{meta=JSON.parse(rf(path.join(RUNDIR,rid),'nodes.json')||'{}')}catch(e){}
+            if((meta.flow||'build')==='fix')continue;
+            if(runStatusOf(meta.nodeStatus,meta.flow).status==='delivered'){target=rid;break}
+          }
+          if(!target)return{code:400,error:'项目无可补办部署的 delivered run（需先有交付完成且跳过上线的 run）'};
+        }else{
+          if(!(pr.runs||[]).includes(target))return{code:404,error:'runId 不属于项目 '+pr.id};
+          if(!fs.existsSync(path.join(RUNDIR,target)))return{code:404,error:'run 目录不存在'};
+          let meta={flow:'build',nodeStatus:[]};
+          try{meta=JSON.parse(rf(path.join(RUNDIR,target),'nodes.json')||'{}')}catch(e){}
+          if((meta.flow||'build')==='fix')return{code:400,error:'fix 流产物走 run 目录交付，不走 /apps 部署'};
+          const st=runStatusOf(meta.nodeStatus,meta.flow); // S5 判定点④：目标校验同用两态判定
+          if(st.status!=='delivered'&&st.status!=='deployed')return{code:400,error:'目标 run 非终态（'+st.status+'）— 仅 delivered/deployed 的 run 可切换指针'};
+        }
+        const prev=pr.deployed&&pr.deployed.runId;
+        const ts=Date.now();
+        pr.deployed={runId:target,ts,history:[{runId:target,ts,action:(q.runId&&prev&&prev!==target)?'rollback':'deploy'},...((pr.deployed&&pr.deployed.history)||[])].slice(0,20)};
+        return{code:200,deployed:pr.deployed,url:'/apps/'+pr.id+'/'};
+      }).then(r=>{if(!r)return j(res,500,{error:'internal'});
+        if(r.code===200)return j(res,200,{ok:true,deployed:r.deployed,url:r.url});
+        return j(res,r.code,{error:r.error})});
+    });
+    return;
   }
   if(req.method==='POST'&&u.pathname==='/api/runs/delete'){
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
@@ -437,6 +552,8 @@ http.createServer((req,res)=>{
       if(!id||!fs.existsSync(p)||!p.startsWith(RUNDIR))return j(res,400,{error:'bad id'});
       const rs=activeRuns.get(p);
       if(rs&&rs.executing)return j(res,409,{error:'正在执行的任务不可删除'});
+      const depRef=loadProjects().find(x=>x.deployed&&x.deployed.runId===id); // S8（T4）：被 deployed 指针引用的 run 拒删
+      if(depRef)return j(res,409,{error:'该 run 正被项目 '+depRef.id+' 的 deployed 指针引用（/apps/'+depRef.id+'/ 在线）— 请先回退到其他版本（/api/projects/deploy）再删除',projectId:depRef.id});
       fs.rmSync(p,{recursive:true});
       if(rs)activeRuns.delete(p);
       projMutate(prs=>{for(const pr of prs)if(pr.runs)pr.runs=pr.runs.filter(x=>x!==id)}); // 去悬空引用
@@ -463,6 +580,9 @@ http.createServer((req,res)=>{
       const id=JSON.parse(b||'{}').id||'';
       const projs=loadProjects();const pr=projs.find(x=>x.id===id);
       if(!pr)return j(res,404,{error:'no project'});
+      // S8（T4）：项目删除前置校验——本项目 run 若被「其他项目」deployed 指针引用则拒删（本项目自身指针随项目记录一并消失，无 /apps 悬挂）
+      const foreign=projs.find(x=>x.id!==id&&x.deployed&&(pr.runs||[]).includes(x.deployed.runId));
+      if(foreign)return j(res,409,{error:'项目 run 被项目 '+foreign.id+' 的 deployed 指针引用 — 请先回退对方指针（/api/projects/deploy）再删除'});
       for(const rid of pr.runs||[]){
         const p=path.join(RUNDIR,rid);
         const rs=activeRuns.get(p);
@@ -609,13 +729,34 @@ http.createServer((req,res)=>{
     });
     return;
   }
-  if(req.method==='POST'&&u.pathname==='/api/approve'){ // 原型确认闸：go=放行下一节点 / redo=打回只重跑原型（feedback 入 prompt）
+  if(req.method==='POST'&&u.pathname==='/api/approve'){ // 人工闸按 gate 分流（S3/T3）：prototype=go|redo（原有语义不动）；deploy=go|skip（无 redo）
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
       const{id='',decision='',feedback=''}=JSON.parse(b||'{}');
       const rs=findRun(id);
       if(!rs)return j(res,400,{error:'no run'});
       if(!rs.awaiting)return j(res,400,{error:'该 run 不在确认闸（awaiting）状态'});
-      if(!['go','redo'].includes(decision))return j(res,400,{error:'decision 须为 go|redo'});
+      if(!['go','redo','skip'].includes(decision))return j(res,400,{error:'decision 须为 go|redo（prototype 闸）或 go|skip（deploy 闸）'});
+      const gate=rs.awaiting.gate||'prototype';
+      if(gate==='deploy'){
+        if(!['go','skip'].includes(decision))return j(res,400,{error:'deploy 闸仅收 go（上线）|skip（跳过）— 不支持打回重做（redo）'});
+        const idx=rs.awaiting.nodeIdx;rs.awaiting=null;persist(rs);
+        res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
+        if(decision==='skip'){
+          rs.nodeStatus[idx]='skipped';rs.acceptDetails[idx]='⏭ 人工跳过上线 — delivered 收尾（未上线，后续可在项目卡补办部署）';persist(rs);
+          rs.events.push({type:'deploy',text:'⏭ 已跳过上线 — run 以 delivered 终态收尾'});
+          W(res,rs.events[rs.events.length-1]);
+          runFrom(rs,idx+1,res); // 末位之后 → all_done
+        }else{
+          rs.nodeStatus[idx]='done';rs.acceptDetails[idx]='✅ 人工拍板上线 — deployed';persist(rs);
+          const pid=rs.projectId||findProjectByRun(rs.id); // 恢复/只读路径下内存无 projectId → 按 runId 反查
+          recordDeploy(pid,rs.id,'deploy');
+          rs.events.push({type:'deploy',text:'🚀 已上线 — 稳定地址 /apps/'+(pid||'?')+'/（版本可回退、地址不变）'});
+          W(res,rs.events[rs.events.length-1]);
+          runFrom(rs,idx+1,res);
+        }
+        return;
+      }
+      if(!['go','redo'].includes(decision))return j(res,400,{error:'原型确认闸仅收 go（放行）|redo（打回重做）— skip 是 deploy 闸专用'});
       const idx=rs.awaiting.nodeIdx;rs.awaiting=null;persist(rs);
       res.writeHead(200,{'Content-Type':'application/x-ndjson; charset=utf-8'});
       if(decision==='redo'){
@@ -656,7 +797,7 @@ http.createServer((req,res)=>{
         try{if(fs.statSync(p).isDirectory()){const r2=restoreRun(p);if(r2){activeRuns.set(p,r2);rs=r2}}}catch(e){}
       }
       if(!rs)return j(res,400,{error:'no run'});
-      if(rs.awaiting)return j(res,400,{error:'原型确认闸等待人工拍板 — 请用 /api/approve {go|redo}'});
+      if(rs.awaiting)return j(res,400,{error:rs.awaiting.gate==='deploy'?'部署闸等待人工拍板 — 请用 /api/approve {go|skip}（上线或跳过，无打回重做）':'原型确认闸等待人工拍板 — 请用 /api/approve {go|redo}'});
       if(rs.executing)return j(res,400,{error:'run 正在执行'});
       const idx=rs.nodeStatus.indexOf('blocked');
       if(idx<0)return j(res,400,{error:'no blocked node'});
@@ -681,4 +822,4 @@ http.createServer((req,res)=>{
     return;
   }
   res.writeHead(404);res.end();
-}).listen(PORT,'0.0.0.0',()=>{bootState();console.log('factory v2.1 (concurrent) on',PORT,'max',MAX_CONCURRENT)});
+}).listen(PORT,'0.0.0.0',()=>{bootState();console.log('factory v2.2 (concurrent+deploy) on',PORT,'max',MAX_CONCURRENT)});

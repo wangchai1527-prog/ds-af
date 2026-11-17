@@ -89,5 +89,91 @@
   "runs": [
    "run-1794879533973-01"
   ]
+ },
+ {
+  "id": "P-012",
+  "name": "https://ternaryfox.com/z",
+  "repo": "/root/.dsh/ds-af/runs/run-1794884174671-01",
+  "created": "2026-11-17T02:56:14.676Z",
+  "runs": []
+ },
+ {
+  "id": "P-013",
+  "name": "https://ternaryfox.com/z",
+  "repo": "/root/.dsh/ds-af/runs/run-1794889121068-01",
+  "created": "2026-11-17T04:18:41.072Z",
+  "runs": [
+   "run-1794889121068-01"
+  ]
+ },
+ {
+  "id": "P-014",
+  "name": "https://ternaryfox.com/z",
+  "repo": "/root/.dsh/ds-af/runs/run-1794884174671-01",
+  "created": "2026-11-17T04:23:22.988Z",
+  "runs": []
+ },
+ {
+  "id": "P-015",
+  "name": "https://ternaryfox.com/z",
+  "repo": "/root/.dsh/ds-af/runs/run-1794889121068-01",
+  "created": "2026-11-17T05:06:09.835Z",
+  "runs": [
+   "run-1794889121068-01"
+  ]
+ },
+ {
+  "id": "P-016",
+  "name": "https://ternaryfox.com/z",
+  "repo": "/root/.dsh/ds-af/runs/run-1794889121068-01",
+  "created": "2026-11-17T05:38:30.670Z",
+  "runs": [
+   "run-1794889121068-01"
+  ]
+ },
+ {
+  "id": "P-017",
+  "name": "Engineering 已立项项目 · 迭代 /",
+  "repo": "/root/.dsh/ds-af/runs/run-1794917403151-01",
+  "created": "2026-11-17T12:10:03.189Z",
+  "runs": [
+   "run-1794917403151-01"
+  ]
+ },
+ {
+  "id": "P-018",
+  "name": "Engineering Factory v2.1",
+  "repo": "/root/.dsh/ds-af/runs/run-1794918138578-02",
+  "created": "2026-11-17T12:22:18.580Z",
+  "runs": [
+   "run-1794918138578-02"
+  ]
+ },
+ {
+  "id": "P-019",
+  "name": "Engineering Factory v2.1",
+  "repo": "/root/.dsh/ds-af/runs/run-1794918138578-02",
+  "created": "2026-11-17T13:14:22.757Z",
+  "runs": [
+   "run-1794918138578-02"
+  ]
+ },
+ {
+  "id": "P-020",
+  "name": "部署闭环集成：把 run-17949181385",
+  "repo": "/root/.dsh/ds-af/runs/run-1794922361225-01",
+  "created": "2026-11-17T13:32:41.228Z",
+  "runs": [
+   "run-1794922361225-01"
+  ]
+ },
+ {
+  "id": "P-021",
+  "name": "部署闭环集成：把 run-17949181385",
+  "repo": "/root/.dsh/ds-af/runs/run-1794922361225-01",
+  "created": "2026-11-17T15:27:13.095Z",
+  "runs": [
+   "run-1794922361225-01"
+  ]
  }
 ]

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>demo · Idea Plan 改名 + 提交双通道（方向确认件 · 示意数据）</title>
+<style>
+:root{--primary:#7c3aed;--ok:#16a34a;--warn:#d97706;--border:#e5e5e5;--muted:#737373}
+body{font:14px/1.6 -apple-system,"PingFang SC",sans-serif;background:#fafafa;padding:20px;max-width:860px;margin:0 auto}
+h2{font-size:14px;margin:18px 0 8px;color:#1a1a1a}
+p.hint{font-size:12px;color:var(--muted);margin:0 0 6px}
+.demo{border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 16px;margin-bottom:14px}
+.tidea{font-weight:700;font-size:14px}
+.edit{font-size:11px;padding:2px 8px;border:1px solid var(--border);border-radius:6px;background:#fff;cursor:pointer;margin-left:8px}
+.stt{font-size:10.5px;padding:1px 8px;border-radius:999px;border:1px solid;display:inline-block}
+.stt.goB{color:var(--ok);border-color:var(--ok)}
+.stt.goF{color:var(--warn);border-color:var(--warn)}
+.gate{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.b{padding:8px 16px;border-radius:8px;font-weight:700;cursor:pointer;border:1px solid;font-size:13px}
+.b.dev{background:#dcfce7;color:var(--ok);border-color:var(--ok)}
+.b.fix{background:#ffedd5;color:#c2410c;border-color:#d97706}
+.b.no{background:#fee2e2;color:#dc2626;border-color:#fca5a5}
+.b.pk{background:#f3f4f6;color:var(--muted);border-color:var(--border)}
+.note{font-size:11px;color:var(--muted);margin-top:8px}
+.rename-dlg{border-top:1px dashed var(--border);margin-top:10px;padding-top:10px;display:none}
+.rename-dlg input{width:70%;padding:6px 10px;border:1px solid var(--border);border-radius:8px;font:inherit}
+</style>
+</head>
+<body>
+<h2>demo A · 拍板闸双通道（awaiting 态）</h2>
+<p class="hint">替换现单 GO：提交开发 / 提交升级整改 二选一；NO-GO / PARK 保留。提交后徽章区分。</p>
+<div class="demo">
+  <span class="tidea">给工厂做个并发流水线观测面板</span><button class="edit" onclick="var r=document.getElementById('rd');r.style.display=r.style.display==='none'?'block':'none'">✏️ 改名</button>
+  <div class="rename-dlg" id="rd"><input value="并发流水线观测面板 · 预研"><button class="edit" onclick="this.closest('.rename-dlg').style.display='none'">保存（POST /rename）</button></div>
+  <div style="margin-top:6px"><span class="stt goB">🟡 待拍板</span> <span style="font-size:11px;color:var(--muted)">第 3 轮 · 已收敛</span></div>
+  <div class="gate">
+    <button class="b dev">🚀 提交开发（立项池 · build 流）</button>
+    <button class="b fix">🔧 提交升级整改（运维 fix 流 · 填目标仓）</button>
+    <button class="b no">❌ NO-GO</button>
+    <button class="b pk">🅿️ PARK</button>
+  </div>
+</div>
+
+<h2>demo B · 归档话题（no-go/park 态）— 再次提交恒可见</h2>
+<p class="hint">现状只有「删除」；改后双提交按钮 + 删除。点提交 = 自动复活（补 revive 日志）+ 走对应通道。</p>
+<div class="demo">
+  <span class="tidea">旧话题 · X8 磨仓参数调研</span><button class="edit">✏️ 改名</button>
+  <div style="margin-top:6px"><span class="stt" style="color:var(--muted)">⚪ 搁置</span> <span style="font-size:11px;color:var(--muted)">第 5 轮 · 结论保留</span></div>
+  <div class="gate">
+    <button class="b dev">🚀 再次提交开发</button>
+    <button class="b fix">🔧 提交升级整改</button>
+    <button class="b pk">🗑 删除话题</button>
+  </div>
+  <div class="note">点提交弹确认：「归档话题将复活并提交，结论按当前 BRIEF 收录」。</div>
+</div>
+
+<h2>demo C · 已提交态徽章 + 可持续再提交（submitMode 如实区分）</h2>
+<p class="hint">人令 2026-11-17：提交按钮永不消失——已提交/已立项态显示「再次提交开发 / 再次提交整改」，再提交 = 派新 run，历史 spawnedRuns 追加不覆盖。</p>
+<div class="demo">
+  <div><span class="tidea">话题 A</span> <span class="stt goB">🟢 已提交 · 开发</span> <span style="font-size:11px;color:var(--muted)">待工厂选走立项</span></div>
+  <div class="gate"><button class="b dev">🚀 再次提交开发</button><button class="b fix">🔧 再次提交整改</button><button class="b no">🗑 删除话题</button></div>
+  <div class="note">再次提交开发 = 重新入立项池；已入池未选走时弹确认「该话题已在立项池，重复提交将排队两次」。</div><br>
+  <div><span class="tidea">话题 B</span> <span class="stt goF">🟠 已提交 · 整改（2 个 run）</span> <span style="font-size:11px;color:var(--muted)">run: fix-1794a · fix-1794b</span></div>
+  <div class="gate"><button class="b dev">🚀 再次提交开发</button><button class="b fix">🔧 再次提交整改</button><button class="b pk">🗑 删除话题</button></div>
+  <div class="note">fix 再提交 = 另建新整改 run（prompt 目标仓路径），旧 run 不受影响；meta.spawnedRuns[] 追加。</div><br>
+  <div><span class="tidea">话题 C（旧数据无 submitMode）</span> <span class="stt goB">🟢 已提交 · 开发</span> <span style="font-size:11px;color:var(--muted)">兜底显示</span></div>
+</div>
+</body>
+</html>
