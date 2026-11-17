@@ -1,6 +1,6 @@
 // Vibe Coding Studio · 真引擎直播后端（claude CLI stream-json → NDJSON 流）
 const http=require('http'),{spawn}=require('child_process'),fs=require('fs'),path=require('path');
-const PORT=8793, LAB='/root/.dsh/DS-AF/samples/lab';
+const PORT=8793, LAB='/root/.dsh/ds-af/samples/lab';
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:'+process.env.PATH};
 const HIST=[]; // {ts,task,events[],result}
 const j=(res,c,o)=>{res.writeHead(c,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(o))};

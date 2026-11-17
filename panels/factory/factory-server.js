@@ -2,7 +2,7 @@
 // 每个节点有进入条件/负责人/交付物/验收判据；验收不过 → 节点 blocked → 流水线停止
 // 并发模型：activeRuns: Map<runDir, runState>，executing 态并发上限 MAX_CONCURRENT（默认 3）
 const http=require('http'),{spawn,execSync}=require('child_process'),fs=require('fs'),path=require('path');
-const PORT=process.env.PORT||8794, RUNDIR=process.env.RUNDIR||'/root/.dsh/DS-AF/runs';
+const PORT=process.env.PORT||8794, RUNDIR=process.env.RUNDIR||'/root/.dsh/ds-af/runs';
 const ANALYSES=path.join(path.dirname(RUNDIR),'analyses'); // 分析台会话根（from-plan 校验边界，防路径注入）
 const PROJFILE=process.env.PROJFILE||path.join(path.dirname(RUNDIR),'projects.json');
 const MAX_CONCURRENT=Math.max(1,parseInt(process.env.MAX_CONCURRENT||'3',10)||3);

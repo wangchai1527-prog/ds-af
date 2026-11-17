@@ -24,7 +24,7 @@ http.createServer(async(req,res)=>{
       Promise.all([8791,8792,8793,8794,8795].map(p=>portUp(p))),
     ]);
     let runs=[];
-    try{runs=fs.readdirSync('/root/.dsh/DS-AF/runs').filter(d=>d.startsWith('run-')).sort().reverse().slice(0,6)}catch(e){}
+    try{runs=fs.readdirSync('/root/.dsh/ds-af/runs').filter(d=>d.startsWith('run-')).sort().reverse().slice(0,6)}catch(e){}
     let claudeVer='';try{claudeVer=execSync('claude --version',{encoding:'utf8',env:ENV}).trim().split('\n')[0]}catch(e){claudeVer='未检出'}
     let pw='';try{pw=execSync('/home/administrator/.hermes/node/bin/npx playwright --version',{encoding:'utf8',env:ENV}).trim()}catch(e){pw='未检出'}
     const r=factory&&factory.run;

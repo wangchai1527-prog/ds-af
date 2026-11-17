@@ -2,7 +2,7 @@
 // 端口 8792 · 独立服务，零耦合工厂（GO 仅提交立项池，立项由工厂 from-plan 拉起并回写 spawnedRun）
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const PORT=process.env.PORT||8792;
-const ADIR=process.env.ANALYSES||'/root/.dsh/DS-AF/analyses';
+const ADIR=process.env.ANALYSES||'/root/.dsh/ds-af/analyses';
 const FACTORY=process.env.FACTORY_URL||'http://127.0.0.1:8794'; // 工厂地址（转修复/转升级服务端代呼，免 CORS）
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin'};
 fs.mkdirSync(ADIR,{recursive:true});
