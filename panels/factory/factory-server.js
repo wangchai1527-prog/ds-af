@@ -749,7 +749,9 @@ http.createServer((req,res)=>{
       if(!amRaw)return j(res,400,{error:'分析会话缺 meta.json，不是合法的分析台话题'});
       let am;try{am=JSON.parse(amRaw)}catch(e){return j(res,400,{error:'meta.json 不可解析'})}
       if(am.state!=='go')return j(res,400,{error:'话题未拍板 GO（当前状态 '+am.state+'）—— 先在 Idea PLAN 分析台拍板 GO 再立项'});
-      if(am.spawnedRun)return j(res,409,{error:'该话题已立项过 run '+am.spawnedRun,runId:am.spawnedRun});
+      // 防重复立项闸只拦 build（同话题重复立项）；fix/iterate 是对已立项对象的整改——spawnedRun 已设正是其常态，放行
+      // （同一 idea 的活动 run 重复仍由下方 findActiveByIdea 指纹查重拦，不影响防重）
+      if(am.spawnedRun&&mode==='build')return j(res,409,{error:'该话题已立项过 run '+am.spawnedRun+'（升级/整改请走 iterate|fix）',runId:am.spawnedRun});
       if(!['build','fix','iterate'].includes(mode))return j(res,422,{error:'mode 须为 build|fix|iterate'});
       if(execCount()>=MAX_CONCURRENT)return j(res,409,{error:'并发已满'});
       const ideaText=((idea||'').trim())||String(am.idea||'').trim(); // idea 可省，回退 meta 真源

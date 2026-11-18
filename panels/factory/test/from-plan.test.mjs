@@ -145,4 +145,21 @@ test('deployTo 面板部署：设目标→上线即同步产物+跑 deploy.sh ·
   assert.equal(c.code,200,c.body.error||'');
   assert.equal(JSON.parse(fs.readFileSync(PROJ,'utf8')).find(x=>x.id==='P-901').deployTo,null,'空串应清除 deployTo');
 });
+test('已立项话题提交升级整改：spawnedRun 已设 → iterate 放行建 run（防重闸只拦 build）',async()=>{
+  // 造一个已立项（spawnedRun 已设）的 GO 话题 + 它名下已有带产品的 run（deployTo 测试造的 P-901/run-dt-1）
+  const an2=path.join(ANROOT,'an-spawned-2');fs.mkdirSync(an2,{recursive:true});
+  fs.writeFileSync(path.join(an2,'meta.json'),JSON.stringify({id:'an-spawned-2',idea:'已立项话题的升级整改诉求（第二轮）',state:'go',round:2,spawnedRun:'run-dt-1'},null,1));
+  fs.writeFileSync(path.join(an2,'BRIEF.md'),'# 升级整改 BRIEF');
+  let r=null;
+  const ok=await poll(async()=>{ // 并发满时 409，等前序 run 收尾后重试
+    r=await api('POST','/api/mission/from-plan',{analysisDir:an2,mode:'iterate',projectId:'P-901'});
+    return r.code===200||!/并发已满/.test(r.body.error||'');
+  },30000,500);
+  assert.ok(ok,'dispatch 应有非并发结论');
+  assert.equal(r.code,200,'已立项话题 iterate 应放行（实际: '+(r.body.error||r.code)+'）');
+  assert.equal(r.body.mode,'iterate');
+  const meta=JSON.parse(fs.readFileSync(path.join(an2,'meta.json'),'utf8'));
+  assert.equal(meta.spawnedRun,r.body.runId,'spawnedRun 指针应切到新 iterate run');
+  assert.ok((JSON.parse(fs.readFileSync(PROJ,'utf8')).find(x=>x.id==='P-901').runs||[]).includes(r.body.runId),'run 应挂回 P-901');
+});
 after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});
