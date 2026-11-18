@@ -294,17 +294,37 @@ window.delTopic=async id=>{
     $('tidea').textContent='选择或新建一个分析会话';$('tstate').innerHTML='';$('rnb').style.display='none';renderMgmt(null)}
   loadList();
 };
-window.dispatchFix=async()=>{
+/* 提交升级整改（对象自动跟随话题，不再手填路径）：
+   ① 话题有 run 历史 → 按工厂项目索引定位关联项目，一键升级迭代（iterate）
+   ② 无 run 历史 → 列工厂项目清单选编号（iterate）；输 / 开头绝对路径则走运维修复（fix） */
+window.submitFix=async st=>{
   if(!cur)return;
-  const repo=prompt('转修复 — 目标仓库绝对路径（现存目录，如 /root/ternaryfox/runtime/api）：');
-  if(!repo)return;
-  const r=await(await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:cur,mode:'fix',repo:repo.trim()})})).json().catch(()=>({}));
-  if(r.runId)alert('已建修复 run：'+r.runId+'（到 Engineering Factory 看进度）');
-  else alert('转修复失败：'+(r.error||'未知错误'));
+  const ok=await decide('go','fix',st);if(!ok)return;
+  const d=await(await fetch('/api/analyses/'+cur)).json().catch(()=>null);
+  const runIds=[...(d&&Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[]),
+                ...((d&&d.meta.spawnedRun)?[d.meta.spawnedRun]:[])];
+  let projs=[];try{projs=(await(await fetch('/api/factory/projects')).json().catch(()=>({}))).projects||[]}catch(e){}
+  let mode,repo='',projectId='';
+  const mine=projs.find(p=>(p.runs||[]).some(r=>runIds.includes(r)));
+  if(mine){ // 话题路径已明确整改对象：直接确认
+    mode='iterate';projectId=mine.id;
+    if(!confirm('整改对象已随话题定位：项目 '+mine.id+'「'+String(mine.name||'').slice(0,30)+'」（由本话题 run 历史关联）— 建升级迭代 run？'))return;
+  }else{
+    const list=projs.map((p,i)=>(i+1)+') '+p.id+' '+String(p.name||'').slice(0,24)+'（runs:'+(p.runs||[]).length+'）').join('\n');
+    const inp=prompt('本话题无 run 历史 — 选择整改/运维对象：输入项目编号走升级迭代'
+      +(list?'\n\n'+list:'\n（工厂暂无项目）')+'\n；或输入 / 开头的仓库绝对路径走运维修复：');
+    if(inp===null)return;
+    const t=inp.trim(),n=parseInt(t);
+    if(projs.length&&String(n)===t&&n>=1&&n<=projs.length){mode='iterate';projectId=projs[n-1].id}
+    else if(t.startsWith('/')){mode='fix';repo=t}
+    else return alert('没认出对象：请输入项目编号，或以 / 开头的仓库绝对路径');
+  }
+  const r=await(await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:cur,mode,repo,projectId})})).json().catch(()=>({}));
+  if(r.runId)alert('已建整改 run：'+r.runId+'（到 Engineering Factory 看进度）');
+  else alert('转整改失败：'+(r.error||'未知错误'));
   loadDetail();loadList();
 };
-/* 提交升级整改 = 先 decide('go',fix) 再走 dispatchFix 的仓库 prompt + /api/dispatch mode=fix */
-window.submitFix=st=>{if(cur)decide('go','fix',st).then(ok=>{if(ok)dispatchFix()})};
 /* 话题改名：prompt 输入新名 → POST /rename → 刷新列表与详情（侧边栏快捷钮可改非当前会话） */
 window.renameTopic=async id=>{
   const t=id||cur;if(!t)return;
@@ -349,7 +369,7 @@ const goMsg=(st,sm)=>{
   const base=st==='go'?'该话题已提交过 — 再次提交（先 reply 续轮更新结论更稳）'
     :(['no-go','park'].includes(st)?`确认复活并提交：话题当前为「${st==='no-go'?'NO-GO 否决':'PARK 搁置'}」归档态，直接提交（不续轮，轮次不变）`
     :'确认 GO：话题进入立项池（open 态 = 跳过收敛强制提交；工厂选走或 dispatch 时才建 run）');
-  return base+(sm==='fix'?'，本次走升级整改：拍板后选目标仓库建修复 run 并累积 run 历史':'，本次走开发：待工厂「选话题立项」')+'？'};
+  return base+(sm==='fix'?'，本次走升级整改：对象自动随话题 run 历史定位（无需手填路径），建 run 并累积 run 历史':'，本次走开发：待工厂「选话题立项」')+'？'};
 window.decide=async(d,sm,st)=>{
   if(!confirm(d==='go'?goMsg(st,sm):d==='withdraw'?'确认撤回：话题回到「待拍板」（工厂尚未选走才允许）？':'确认 '+d.toUpperCase()+'：会话归档（产物保留，可复活）？'))return false;
   const r=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:d,submitMode:sm||'build'})})).json();

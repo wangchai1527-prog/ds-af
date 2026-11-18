@@ -154,6 +154,12 @@ test('/api/dispatch 代理工厂（stub）：转发 mode/repo/projectId · 工�
   assert.equal(dp.code,200);assert.equal(dp.body.runId,'fix-1');
   assert.equal(got.mode,'fix');assert.equal(got.repo,'/tmp/xxx');assert.ok(got.analysisDir.startsWith(ADIR),'analysisDir 应由服务端补全');
   assert.equal((await api2('POST','/api/dispatch',{id:'evil!'})).code,422,'非法 id 应 422');
+  // v1.1：iterate（升级迭代）建 run 同样累积 spawnedRuns 历史
+  const dpi=await api2('POST','/api/dispatch',{id,mode:'iterate',projectId:'P-001'});
+  assert.equal(dpi.code,200);
+  assert.equal(got.mode,'iterate');assert.equal(got.projectId,'P-001');
+  const mm=JSON.parse(fs.readFileSync(path.join(d3,'meta.json'),'utf8'));
+  assert.ok(Array.isArray(mm.spawnedRuns)&&mm.spawnedRuns.filter(x=>x==='fix-1').length>=2,'fix+iterate 均应累积 spawnedRuns');
   // 工厂不可达：起第三个实例指向死端口
   const TP3=String(8995);
   let child3=spawn(process.execPath,['plan-server.js'],{env:{...ENVV,PORT:TP3,FACTORY_URL:'http://127.0.0.1:1'},stdio:'pipe'});

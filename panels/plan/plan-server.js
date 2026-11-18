@@ -101,8 +101,9 @@ const body=req=>new Promise(r=>{let b='';req.on('data',d=>b+=d);req.on('end',()=
 
 const srv=http.createServer(async(req,res)=>{
   const u=req.url.split('?')[0];
-  if(req.method==='GET'&&(u==='/'||u==='/plan.html'))
-    return res.end(fs.readFileSync(path.join(__dirname,'plan.html')));
+  if(req.method==='GET'&&(u==='/'||u==='/plan.html')) // no-store：防浏览器缓存旧版页面（「怎么还是没更新」根因）
+    return res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'})
+      ,res.end(fs.readFileSync(path.join(__dirname,'plan.html')));
   if(req.method==='GET'&&u==='/api/analyses')return json(res,200,{analyses:listAnalyses()});
   let m;
   if(req.method==='GET'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)$/))){
@@ -225,10 +226,10 @@ const srv=http.createServer(async(req,res)=>{
       const r=await fetch(FACTORY+'/api/mission/from-plan',{method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({analysisDir:s.dir,mode,repo,projectId})});
       const j=await r.json().catch(()=>({}));
-      if(mode==='fix'&&r.ok&&j.runId){ // fix 成功建 run：追加 spawnedRuns[] 历史（无则建；spawnedRun 首值保留不覆盖；build 模式仍由工厂回写，不改）
+      if(r.ok&&j.runId){ // dispatch 建 run 成功（fix 或 iterate）：追加 spawnedRuns[] 历史（无则建；spawnedRun 首值保留不覆盖；build 模式仍由工厂回写，不改）
         if(!Array.isArray(s.meta.spawnedRuns))s.meta.spawnedRuns=[];
         s.meta.spawnedRuns.push(j.runId);
-        writeMeta(s.dir,s.meta);log(s.dir,{ev:'dispatch',mode:'fix',runId:j.runId,repo:repo||''});
+        writeMeta(s.dir,s.meta);log(s.dir,{ev:'dispatch',mode,runId:j.runId,repo:repo||'',projectId:projectId||''});
       }
       return json(res,r.status,j);
     }catch(e){return json(res,502,{error:'工厂不可达: '+(e.message||'')})}
