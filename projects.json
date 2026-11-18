@@ -171,5 +171,40 @@
     }
    ]
   }
+ },
+ {
+  "id": "P-022",
+  "name": "fix:Idea Plan 分析台\n侧边",
+  "repo": "/root/.dsh/ds-af/panels/plan",
+  "created": "2026-11-18T09:09:50.076Z",
+  "runs": [
+   "fix-1794992990046-02",
+   "run-1795001678808-01"
+  ],
+  "deployed": {
+   "runId": "run-1795001678808-01",
+   "ts": 1795004145132,
+   "history": [
+    {
+     "runId": "run-1795001678808-01",
+     "ts": 1795004145132,
+     "action": "deploy"
+    }
+   ]
+  }
+ },
+ {
+  "id": "P-023",
+  "name": "Forge v3.0 升级预览设计",
+  "repo": "/root/.dsh/ds-af/runs/run-1795001404325-01",
+  "created": "2026-11-18T11:30:04.334Z",
+  "runs": []
+ },
+ {
+  "id": "P-024",
+  "name": "idea plan 对话窗口新增加 图片对话功能",
+  "repo": "/root/.dsh/ds-af/runs/run-1795001450109-02",
+  "created": "2026-11-18T11:30:50.113Z",
+  "runs": []
  }
 ]
