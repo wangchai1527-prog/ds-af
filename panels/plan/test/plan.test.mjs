@@ -20,11 +20,12 @@ test('/api/new 无 topic → 422 拒建（杜绝无归属漂移会话）',async(
   const r2=await api('POST','/api/new',{idea:'想落进待整理保留桶的会话',topic:'待整理'});
   assert.equal(r2.code,422,'「待整理」保留桶不可作归属');
 });
-test('/api/dirs 目录树：根列表 200 · base 逃逸 400 · 非目录 400',async()=>{
+test('/api/dirs 目录树：根列表 200 · base 逃逸/黑名单 400 · 非目录 400',async()=>{
   const r=await api('GET','/api/dirs?base=');
   assert.equal(r.code,200);assert.ok(Array.isArray(r.body.dirs));
-  assert.equal((await api('GET','/api/dirs?base=../etc')).code,400,'base 逃逸 /root 应 400');
-  assert.equal((await api('GET','/api/dirs?base=.dsh/ds-af/panels/plan/plan-server.js')).code,400,'非目录应 400（base 相对 /root）');
+  assert.equal((await api('GET','/api/dirs?base=../etc')).code,400,'base 逃逸（落入黑名单 /etc）应 400');
+  const f=path.join(ADIR,'not-a-dir.txt');fs.writeFileSync(f,'x');
+  assert.equal((await api('GET','/api/dirs?base='+encodeURIComponent(f))).code,400,'非目录应 400（v1.3 base 为绝对路径）');
 });
 test('归位 assign：待整理/错桶会话移入目标桶 · meta.topic=标签 · 磁盘目录随迁',async()=>{
   const r=await api('POST','/api/new',{idea:'归位验证专用会话：落错桶待整理',topic:'临时桶A'});

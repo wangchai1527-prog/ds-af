@@ -1,6 +1,8 @@
 // Idea Plan 分析台 v1.1 —— 会话/轮次协议（单一真源=磁盘，逐轮只增不改）
 // 端口 8792 · 独立服务，零耦合工厂（GO 仅提交立项池，立项由工厂 from-plan 拉起并回写 spawnedRun）
 // v1.1：话题目录归属（analyses/<topic>/an-*，杜绝无归属漂移会话）+ 历史话题续接（parent 注入父成果，不从零立项）
+// v1.3：目录树对齐 DSH 语义（全局根 '/' + 系统目录黑名单 + hasChildren 真探测 + 目录增删收紧 /root 子树），
+//       归属桶标签升级全路径 + 列表带磁盘桶 bucket（防「同磁盘桶不同侧栏组」分裂）—— 依据 BRIEF v1.3 / DIAGNOSIS §5
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const PORT=process.env.PORT||8792;
 const ADIR=process.env.ANALYSES||'/root/.dsh/ds-af/analyses';
@@ -13,7 +15,20 @@ const rf=(d,f)=>{try{return fs.readFileSync(path.join(d,f),'utf8')}catch(e){retu
 const log=(d,ev)=>{try{fs.appendFileSync(path.join(d,'events.jsonl'),JSON.stringify({ts:Date.now(),...ev})+'\n')}catch(e){}};
 /* ---------- 话题目录基元（v1.1：会话挂 analyses/<topic>/an-*；根级 an-* = 历史待整理） ---------- */
 const NO_TOPIC='待整理'; // DSH 式：无归属存量统一进「待整理」桶，人工归位（PRD D4=C，不自动猜测）
-const DIR_ROOT='/root'; // 目录树选择器根（DSH「Select Workspace Directory」同源：Home=/root）
+// v1.3 目录树读写分层：读/选全局根放开（+系统目录黑名单）；增/删收紧 /root 子树 + 保护路径（BRIEF v1.3 D4-A）
+const DIR_ROOT='/'; // 目录树选择器根（DSH「Select Workspace Directory」语义：全局根，非仅 Home）
+const SYS_DIRS=new Set(['/proc','/sys','/dev','/run','/boot','/etc','/var','/usr','/lost+found']);
+const WRITE_ROOT='/root'; // 目录增/删写域（读/选不受限）
+const PROTECTED_SEGS=['.dsh','.claude','.git','.ssh','.config','.local']; // 保护路径段：任一段命中即拒增/删
+const inBlack=p=>{for(const b of SYS_DIRS)if(p===b||p.startsWith(b+path.sep))return true;return false};
+const dirLog=(op,p)=>{try{fs.appendFileSync(path.join(ADIR,'dir-ops.jsonl'),JSON.stringify({ts:new Date().toISOString(),op,path:p})+'\n')}catch(e){}};
+const writeErr=p=>{ // 目录增/删安全校验（DIAGNOSIS §5.6：增/删收紧、保护路径、桶根与家目录本体不可动）
+  if(p===WRITE_ROOT)return '不能对 '+WRITE_ROOT+' 本身做增/删';
+  if(!p.startsWith(WRITE_ROOT+path.sep))return '目录增/删仅限 '+WRITE_ROOT+' 子树（浏览/选择全局放开）';
+  if(p===ADIR||p.split(path.sep).some(s=>PROTECTED_SEGS.includes(s)))return '保护路径不可增/删：'+p;
+  return null};
+const kidDirs=p=>{try{return fs.readdirSync(p,{withFileTypes:true})
+  .filter(e=>e.isDirectory()&&!e.name.startsWith('.')&&e.name!=='node_modules'&&e.name!=='.cache'&&!inBlack(path.join(p,e.name)))}catch(e){return[]}};
 const slugTopic=t=>String(t).replace(/[\\/:*?"<>|]+/g,'_').replace(/\.\./g,'').trim().slice(0,60);
 function topicDirs(){try{return fs.readdirSync(ADIR,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('an-')).map(e=>e.name)}catch(e){return[]}}
 function readMeta(id){ // 先根级（历史待整理）后各话题目录逐层找
@@ -24,14 +39,15 @@ function readMeta(id){ // 先根级（历史待整理）后各话题目录逐层
 function writeMeta(d,meta){meta.updated=new Date().toISOString();fs.writeFileSync(path.join(d,'meta.json'),JSON.stringify(meta,null,1))}
 function listAnalyses(){
   const out=[];
-  const push=(id,dir,topic)=>{const m=rf(dir,'meta.json');if(!m)return;let j;try{j=JSON.parse(m)}catch(e){return}
-    out.push({id,topic,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated,
+  // v1.3：带 bucket（磁盘桶目录名）——侧边栏按磁盘桶聚合（单一真源），防「同磁盘桶不同侧栏组」分裂（DIAGNOSIS R4）
+  const push=(id,dir,topic,bucket)=>{const m=rf(dir,'meta.json');if(!m)return;let j;try{j=JSON.parse(m)}catch(e){return}
+    out.push({id,topic,bucket,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated,
       submitMode:j.submitMode||'build',spawnedRuns:Array.isArray(j.spawnedRuns)?j.spawnedRuns.length:0,parent:j.parent||null})};
   try{
-    for(const id of fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,id),NO_TOPIC);
+    for(const id of fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,id),NO_TOPIC,NO_TOPIC);
     for(const t of topicDirs())for(const id of fs.readdirSync(path.join(ADIR,t)).filter(d=>d.startsWith('an-'))){
       const d=path.join(ADIR,t,id);const m=rf(d,'meta.json');
-      push(id,d,m?(JSON.parse(m).topic||t):t)}
+      push(id,d,m?(JSON.parse(m).topic||t):t,t)}
   }catch(e){}
   return out.sort((a,b)=>(b.updated||'').localeCompare(a.updated||''))}
 
@@ -203,17 +219,41 @@ const srv=http.createServer(async(req,res)=>{
     log(s.dir,{ev:'decide',decision,note:note||''});
     return json(res,200,{ok:true,state:decision});
   }
-  if(req.method==='GET'&&u.startsWith('/api/dirs')){ // DSH 式目录树数据源（Select Workspace Directory）：base 相对 /root，只列目录、防逃逸
+  if(req.method==='GET'&&u.startsWith('/api/dirs')){ // v1.3 DSH 式目录树数据源：全局根 '/' + 系统目录黑名单 + hasChildren 真探测；防逃逸保留
     const q=new URL(req.url,'http://x').searchParams.get('base')||'';
-    const base=path.resolve(DIR_ROOT,q);
-    if(base!==DIR_ROOT&&!base.startsWith(DIR_ROOT+path.sep))return json(res,400,{error:'base 须位于 '+DIR_ROOT+' 之内'});
+    const base=path.resolve(DIR_ROOT,q||'.');
+    if(DIR_ROOT!=='/'&&base!==DIR_ROOT&&!base.startsWith(DIR_ROOT+path.sep))return json(res,400,{error:'base 须位于 '+DIR_ROOT+' 之内'});
+    if(inBlack(base))return json(res,400,{error:'base 在系统目录黑名单内（'+[...SYS_DIRS].join(' ')+'）'});
     let st;try{st=fs.statSync(base)}catch(e){return json(res,404,{error:'目录不存在'})}
     if(!st.isDirectory())return json(res,400,{error:'base 不是目录'});
-    let dirs=[];
-    try{dirs=fs.readdirSync(base,{withFileTypes:true})
-      .filter(e=>e.isDirectory()&&!e.name.startsWith('.')&&e.name!=='node_modules'&&e.name!='.cache')
-      .slice(0,200).map(e=>({name:e.name,hasChildren:true}))}catch(e){}
+    const dirs=kidDirs(base).slice(0,200)
+      .map(e=>({name:e.name,hasChildren:kidDirs(path.join(base,e.name)).length>0})); // 真探测：叶子目录不再有假 ▸
     return json(res,200,{base:q||'',dirs});
+  }
+  if(req.method==='POST'&&u==='/api/dirs/mkdir'){ // v1.3 目录管理：树内新建子目录（写域收紧 /root 子树；操作写日志）
+    const{base,name}=await body(req);
+    const abs=path.resolve(String(base||''));
+    const nm=String(name||'').trim();
+    if(!nm||/[\\/]|\.\./.test(nm)||nm.startsWith('.'))return json(res,422,{error:'目录名非法（禁路径分隔符/../隐藏名）'});
+    if(nm.length>60)return json(res,422,{error:'目录名过长（≤60 字）'});
+    const we=writeErr(abs);if(we)return json(res,403,{error:we});
+    let st;try{st=fs.statSync(abs)}catch(e){return json(res,404,{error:'父目录不存在：'+abs})}
+    if(!st.isDirectory())return json(res,400,{error:'base 不是目录'});
+    try{fs.mkdirSync(path.join(abs,nm))}catch(e){return json(res,409,{error:'创建失败：'+(e.message||'')})}
+    dirLog('mkdir',path.join(abs,nm));
+    return json(res,200,{ok:true,path:path.join(abs,nm)});
+  }
+  if(req.method==='POST'&&u==='/api/dirs/rmdir'){ // v1.3 目录管理：仅空目录可删 + 写域/保护路径校验；不可逆操作写日志
+    const p=await body(req);
+    const abs=path.resolve(String(p.path||''));
+    const we=writeErr(abs);if(we)return json(res,403,{error:we});
+    let st;try{st=fs.statSync(abs)}catch(e){return json(res,404,{error:'目录不存在：'+abs})}
+    if(!st.isDirectory())return json(res,400,{error:'不是目录'});
+    let entries;try{entries=fs.readdirSync(abs)}catch(e){return json(res,409,{error:'读取失败：'+(e.message||'')})}
+    if(entries.length)return json(res,409,{error:'目录非空（'+entries.length+' 项），仅可删除空目录'});
+    try{fs.rmdirSync(abs)}catch(e){return json(res,409,{error:'删除失败：'+(e.message||'')})}
+    dirLog('rmdir',abs);
+    return json(res,200,{ok:true});
   }
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/assign$/))){ // 归位/移动桶：待整理→目标目录（PRD D4=C 人工归位；不做自动猜测）
     const{topic}=await body(req);const s=readMeta(m[1]);

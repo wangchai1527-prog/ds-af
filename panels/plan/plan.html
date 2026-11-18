@@ -64,6 +64,28 @@ body.modal-open .modal{display:block}
 .tnode .tw{width:14px;text-align:center;color:var(--muted);cursor:pointer;flex:none}
 .tnode.sel .tw{color:#fff}
 .tnode.home{color:var(--muted);font-weight:600;cursor:default}
+/* v1.3：树节点悬停目录管理（➕新建/🗑删空目录，限 /root 子树显示，服务端再校验） */
+.tnode .dops{display:none;margin-left:auto;gap:2px;flex:none}
+.tnode:hover .dops{display:inline-flex}
+.tnode .dops span{cursor:pointer;padding:0 4px;border-radius:4px;font-size:11px}
+.tnode .dops span:hover{background:#ede9fe}
+.tnode.sel .dops span:hover{background:rgba(255,255,255,.25)}
+/* v1.3：组头 … 菜单（新建会话绑此目录 + 目录管理留位） */
+.tg-head .dots{margin-left:auto;font-weight:700;padding:0 6px;border-radius:6px;flex:none}
+.tg-head .dots:hover{background:#f5f3ff;color:var(--primary)}
+.tgmenu{font-size:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;margin:0 4px 6px 18px;box-shadow:0 4px 16px rgba(0,0,0,.1);overflow:hidden}
+.tgmenu div{padding:6px 12px;cursor:pointer}
+.tgmenu div:hover{background:#f5f3ff}
+.tgmenu div.off{color:var(--muted);cursor:default;font-size:11px}
+.tgmenu div.off:hover{background:none}
+/* v1.3：提交三态徽章（⏳处理中/🟢成功/🔴失败可重试） + toast 撤销窗 */
+.subb{font-size:11.5px;padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;display:inline-flex;gap:6px;align-items:center}
+.subb.ok{color:var(--ok);border-color:var(--ok)}
+.subb.err{color:var(--err);border-color:#fca5a5}
+.subb .mb{padding:2px 8px;font-size:11px}
+#toast{position:fixed;left:50%;bottom:34px;transform:translate(-50%,20px);opacity:0;transition:.2s;background:#1a1a1a;color:#fff;padding:9px 16px;border-radius:10px;font-size:13px;z-index:80;display:flex;gap:10px;align-items:center;pointer-events:none}
+#toast.on{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+#toast button{padding:3px 12px;border-radius:6px;border:0;background:#fff;color:#1a1a1a;font-weight:600;cursor:pointer;font-size:12px}
 @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
 .modal.shake{animation:shake .25s}
 .modal .err{display:none;color:var(--err);font-size:12px;margin-top:6px}
@@ -183,6 +205,7 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
   </div>
 </main>
 <footer>动作栏全话题统一：🚀提交开发 · 🔧提交升级整改 · 🅿️搁置 · ❌否决 · 🗑删除话题（已立项话题另前置 🏭徽章）｜归属 = DSH 式目录树选择（无归属不可创建）；无归属存量进 📥待整理，悬停 ↳ 归位｜继续对话 = reply 续轮，已立项后 🔧整改直建新 run 并累积 📜run 历史</footer>
+<div id="toast"></div>
 <div id="modalMask" onclick="closeModal()"></div>
 <div class="modal" id="modal">
   <h3 id="mTitle">🌱 新建分析会话</h3>
@@ -218,43 +241,66 @@ const FLOWS=[['all','全部'],['open','分析中'],['awaiting','待拍板'],['go
 
 function renderFilters(){$('filters').innerHTML=FLOWS.map(([k,l])=>`<span class="fbtn ${filter===k?'on':''}" onclick="setF('${k}')">${l}</span>`).join('')}
 window.setF=k=>{filter=k;renderFilters();loadList()};
-/* DSH 式目录树弹层（新建 / 归位 双模式）：Select Workspace Directory — Home 只展开不可选，
-   懒加载子目录；未选归属时创建被行为级拦截（报错+抖动，非仅 UI 禁用 — PRD 验收 1） */
-const DIRROOT='/root';
-let mMode='new',mTarget=null,selDir=null;
-const treeState={open:new Set(),kids:{}}; // open=已展开路径集 · kids=路径→子目录缓存
+/* DSH 式目录树弹层（新建 / 归位 双模式）：Select Workspace Directory — v1.3 全局根 '/'（系统目录黑名单后端滤），
+   真递归渲染任意深度（懒加载保留），叶子无假 ▸；未选归属时创建被行为级拦截（报错+抖动，非仅 UI 禁用 — PRD 验收 1） */
+const DIRROOT='/'; // v1.3：全局根（DIAGNOSIS §5.2），base 传绝对路径；归属标签 = 相对根全路径（如 srv/panel-x）
+const WRITEROOT='/root'; // 目录增/删写域（与后端 WRITE_ROOT 同源；读/选不受限）
+let mMode='new',mTarget=null,selDir=null,tgMenuKey=null;
+const treeState={open:new Set(),kids:{}}; // open=已展开绝对路径集 · kids=绝对路径→子目录缓存（mkdir/rmdir 后失效重取）
+const parentOf=abs=>{const i=abs.lastIndexOf('/');return i<=0?'/':abs.slice(0,i)};
 window.closeModal=()=>{document.body.classList.remove('modal-open')};
-window.openModal=(mode,id)=>{
-  mMode=mode;mTarget=id||null;selDir=null;
+window.openModal=(mode,id,preset)=>{ // preset=组头「新建会话（绑此目录）」预置归属标签
+  mMode=mode;mTarget=id||null;selDir=preset||null;tgMenuKey=null;
   $('mTitle').textContent=mode==='new'?'🌱 新建分析会话':'↳ 归位到目录';
   $('mIdeaRow').style.display=mode==='new'?'block':'none';
   $('mOk').textContent=mode==='new'?'创建':'归位';
   $('mErr').style.display='none';
-  $('selPath').textContent='未选择';$('selPath').classList.remove('on');
+  $('selPath').textContent=preset?DIRROOT+preset:'未选择';$('selPath').classList.toggle('on',!!preset);
   document.body.classList.add('modal-open');
   renderTree();
 };
-async function fetchKids(base){
-  if(treeState.kids[base])return treeState.kids[base];
-  const d=await(await fetch('/api/dirs?base='+encodeURIComponent(base))).json().catch(()=>({dirs:[]}));
-  treeState.kids[base]=d.dirs||[];return treeState.kids[base];
+async function fetchKids(abs){
+  if(treeState.kids[abs]!==undefined)return treeState.kids[abs];
+  const d=await(await fetch('/api/dirs?base='+encodeURIComponent(abs))).json().catch(()=>({dirs:[]}));
+  treeState.kids[abs]=d.dirs||[];return treeState.kids[abs];
 }
-async function renderTree(){ // 根层直接渲染；已展开层用缓存渲染（懒加载）
-  const root=await fetchKids('');
-  const sub=rel=>(treeState.kids[rel]||[]).map(k=>
-    `<div class="tnode ${selDir===rel+'/'+k.name?'sel':''}" onclick="pickDir('${esc(rel+'/'+k.name)}')">
-      <span class="tw" onclick="event.stopPropagation();twDir('${esc(rel+'/'+k.name)}')">▸</span>📁 ${esc(k.name)}</div>`).join('')
-    ||'<div style="font-size:11.5px;color:var(--muted);padding:4px 24px">（无子目录）</div>';
-  $('tree').innerHTML=
-    `<div class="tnode home">🏠 Home (${DIRROOT})</div>`+root.map(k=>
-    `<div class="tnode ${selDir===k.name?'sel':''}" onclick="pickDir('${esc(k.name)}')">
-      <span class="tw" onclick="event.stopPropagation();twDir('${esc(k.name)}')">${treeState.open.has(k.name)?'▾':'▸'}</span>📁 ${esc(k.name)}</div>`
-    +(treeState.open.has(k.name)?`<div style="margin-left:26px">${sub(k.name)}</div>`:'')).join('');
+const invalidate=abs=>{delete treeState.kids[abs];delete treeState.kids[parentOf(abs)]}; // kids 缓存失效（目录增删后重取）
+async function renderTree(){ // 真递归：按 open 集合任意深度渲染（修复三级+不可见），▸/▾ 随 open 切换，hasChildren=false 不渲染展开钮
+  const canWrite=abs=>abs===WRITEROOT||abs.startsWith(WRITEROOT+'/'); // 增/删入口仅 /root 子树显示（服务端再校验）
+  const render=async abs=>{
+    const kids=await fetchKids(abs);
+    let h='';
+    for(const k of kids){
+      const kabs=(abs==='/'?'':abs)+'/'+k.name,rel=kabs.slice(1);
+      const isOpen=treeState.open.has(kabs);
+      const tw=k.hasChildren?`<span class="tw" onclick="event.stopPropagation();twDir('${esc(kabs)}')">${isOpen?'▾':'▸'}</span>`:'<span class="tw"></span>';
+      const ops=canWrite(kabs)?`<span class="dops"><span title="新建子目录（限 /root 子树）" onclick="event.stopPropagation();mkDir('${esc(kabs)}')">➕</span><span title="删除空目录（限 /root 子树）" onclick="event.stopPropagation();rmDir('${esc(kabs)}')">🗑</span></span>`:'';
+      h+=`<div class="tnode ${selDir===rel?'sel':''}" onclick="pickDir('${esc(kabs)}')">${tw}📁 ${esc(k.name)}${ops}</div>`;
+      if(isOpen)h+=`<div style="margin-left:26px">${await render(kabs)}</div>`;
+    }
+    return h||'<div style="font-size:11.5px;color:var(--muted);padding:4px 24px">（无子目录）</div>';
+  };
+  $('tree').innerHTML=`<div class="tnode home">🖥 / 全局根（系统目录已屏蔽）</div>`+await render(DIRROOT);
 }
-window.pickDir=rel=>{selDir=rel;$('selPath').textContent=DIRROOT+'/'+rel;$('selPath').classList.add('on');renderTree()};
-window.twDir=async rel=>{ // 展开/折叠（懒加载该层子目录）
-  if(treeState.open.has(rel)){treeState.open.delete(rel);renderTree();return}
-  await fetchKids(rel);treeState.open.add(rel);renderTree();
+window.pickDir=abs=>{selDir=abs.slice(1);$('selPath').textContent=abs;$('selPath').classList.add('on');renderTree()};
+window.twDir=async abs=>{ // 展开/折叠（懒加载该层子目录）
+  if(treeState.open.has(abs)){treeState.open.delete(abs);renderTree();return}
+  await fetchKids(abs);treeState.open.add(abs);renderTree();
+};
+window.mkDir=async abs=>{ // 树内新建子目录：成功即失效 kids 缓存并自动展开（即时可见）
+  const name=prompt('在 '+abs+' 下新建子目录：');
+  if(!name||!name.trim())return;
+  const r=await(await fetch('/api/dirs/mkdir',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({base:abs,name:name.trim()})})).json().catch(()=>({}));
+  if(!r.ok)return alert('新建失败：'+(r.error||'未知错误'));
+  invalidate(abs);treeState.open.add(abs);renderTree();
+};
+window.rmDir=async abs=>{ // 删空目录（二次确认 + 服务端空目录/保护路径/写域校验）
+  if(!confirm('删除空目录 '+abs+'？（仅空目录可删；非空/保护路径/出界会被服务端拒绝）'))return;
+  const r=await(await fetch('/api/dirs/rmdir',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:abs})})).json().catch(()=>({}));
+  if(!r.ok)return alert('删除失败：'+(r.error||'未知错误'));
+  treeState.open.delete(abs);invalidate(abs);renderTree();
 };
 $('mOk').onclick=async()=>{
   const modal=$('modal'),err=$('mErr');
@@ -280,21 +326,28 @@ async function loadList(){
   const d=await(await fetch('/api/analyses')).json().catch(()=>({analyses:[]}));
   const all=d.analyses||[];
   const arr=all.filter(a=>filter==='all'||a.state===filter);
-  /* 按归属目录分桶：📥待整理（无归属存量）排最前、条目悬停 ↳ 归位；其余桶悬停 ✏️/🗑（管理正交） */
-  const groups={};for(const a of arr)(groups[a.topic||'待整理']=groups[a.topic||'待整理']||[]).push(a);
+  /* v1.3 按磁盘桶聚合（单一真源，防「同磁盘桶不同侧栏组」分裂）：组名=成员一级分类一致时取之、否则桶名；
+     默认折叠（plan-tg-collapsed 记忆优先）；条目悬停显示完整归属；组头 … 菜单 = 新建会话绑此目录 + 目录管理留位 */
+  const groups={};for(const a of arr){const b=a.bucket||a.topic||'待整理';(groups[b]=groups[b]||[]).push(a)}
   const keys=Object.keys(groups).sort((x,y)=>(x==='待整理')-(y==='待整理')||x.localeCompare(y));
+  const gLabel=g=>{const f=new Set(groups[g].map(a=>String(a.topic||'').split('/')[0]).filter(Boolean));return f.size===1?[...f][0]:g};
   let collapsed={};try{collapsed=JSON.parse(localStorage.getItem('plan-tg-collapsed')||'{}')}catch(e){}
-  window.tgToggle=t=>{collapsed[t]=!collapsed[t];try{localStorage.setItem('plan-tg-collapsed',JSON.stringify(collapsed))}catch(e){};loadList()};
-  $('list').innerHTML=arr.length?keys.map(t=>`
-    <div class="tg-head" onclick="tgToggle(${JSON.stringify(t)})">${collapsed[t]?'▸':'▾'} ${t==='待整理'?'📥':'📁'} ${esc(t)}<span class="cnt">（${groups[t].length}）</span></div>`+
-    (collapsed[t]?'':groups[t].map(a=>`
-    <div class="ses ${cur===a.id?'sel':''}" onclick="selSes('${a.id}')">
+  const isC=t=>collapsed[t]===undefined?true:!!collapsed[t]; // v1.3 默认折叠；手动展开记忆保留
+  window.tgToggle=t=>{collapsed[t]=!isC(t);try{localStorage.setItem('plan-tg-collapsed',JSON.stringify(collapsed))}catch(e){};loadList()};
+  window.tgMenu=t=>{tgMenuKey=tgMenuKey===t?null:t;loadList()};
+  window.tgNew=(t,preset)=>{tgMenuKey=null;openModal('new',null,preset)}; // 绑桶新建：preset=成员完整归属标签（slug 即落本桶）
+  $('list').innerHTML=arr.length?keys.map(t=>{
+    const bind=t==='待整理'?null:groups[t].map(a=>a.topic).find(Boolean); // 新建绑此桶用的完整标签（待整理不可绑，仍走选目录）
+    return `<div class="tg-head" onclick="tgToggle(${JSON.stringify(t)})" title="磁盘桶：${esc(t)}">${isC(t)?'▸':'▾'} ${t==='待整理'?'📥':'📁'} ${esc(t==='待整理'?t:gLabel(t))}<span class="cnt">（${groups[t].length}）</span><span class="dots" onclick="event.stopPropagation();tgMenu(${JSON.stringify(t)})">…</span></div>`
+    +(tgMenuKey===t?`<div class="tgmenu">${bind?`<div onclick="tgNew(${JSON.stringify(t)},${JSON.stringify(bind)})">🌱 新建会话（绑此目录）</div>`:`<div onclick="tgNew(${JSON.stringify(t)})">🌱 新建会话（选目录）</div>`}<div class="off">🗂 目录管理（预留）</div></div>`:'')
+    +(isC(t)?'':groups[t].map(a=>`
+    <div class="ses ${cur===a.id?'sel':''}" onclick="selSes('${a.id}')" title="归属：${esc(a.topic||'待整理')}">
       <div class="idea">${a.parent?'<span title="续接会话" style="color:var(--primary)">🔁 </span>':''}${esc(a.idea)}</div>
       <div class="meta">${stSpan(a.state,a.submitMode,a.spawnedRuns)}<span>第 ${a.round} 轮</span><span>${(a.updated||'').slice(5,16).replace('T',' ')}</span>
         <span class="qa">${t==='待整理'?`<span title="归位到目录" onclick="event.stopPropagation();openModal('assign','${a.id}')">↳</span>`:''}<span title="改名" onclick="event.stopPropagation();renameTopic('${a.id}')">✏️</span><span class="del" title="删除（未立项时可用）" onclick="event.stopPropagation();delTopic('${a.id}')">🗑</span></span></div>
-    </div>`).join(''))).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
+    </div>`).join(''))}).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
 }
-window.selSes=id=>{cur=id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()};
+window.selSes=id=>{cur=id;pick={};subBadge=null;if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()};
 
 /* 决策点表解析：| # | 决策点 | 选项 | 推荐 | 依据 | */
 function parseTable(md){
@@ -385,15 +438,32 @@ async function loadDetail(){
 }
 /* 话题管理动作栏（全话题统一按钮组，不随状态换脸；唯一差异 = 已立项话题前置 🏭徽章+📜run 历史）：
    🚀提交开发 · 🔧提交升级整改 · 🅿️搁置 · ❌否决 · 🗑删除话题
-   继续对话 = reply 续轮，目的就是再次提交：已立项后 🔧整改直建新 run 并累积 spawnedRuns */
+   v1.3 提交流默认化：🚀/🔧 不再弹问题式确认框，点击直提 + 三态徽章（⏳/🟢/🔴可重试带原因）+ toast 撤销窗（入池阶段可用） */
+let subBadge=null; // 当前会话最近一次提交的三态徽章（busy/ok/err），切会话即清
+function setSub(st,info,retry){subBadge={st,info,retry};loadDetail()}
+window.subRetry=null;
+let toastTimer=null;
+function toast(msg,onUndo,ms=3000){ // ~3s 撤销窗：入池阶段（未 spawn）可撤销，dispatch 后不可（不弹此窗）
+  const t=$('toast');
+  t.innerHTML=esc(msg)+(onUndo?' <button>撤销</button>':'');
+  t.classList.add('on');clearTimeout(toastTimer);
+  const btn=t.querySelector('button');
+  if(btn)btn.onclick=()=>{t.classList.remove('on');clearTimeout(toastTimer);onUndo()};
+  toastTimer=setTimeout(()=>t.classList.remove('on'),ms);
+}
 function renderMgmt(d){
   if(!cur){$('mgmt').innerHTML='';return}
-  const st=d.meta.state,sp=d.meta.spawnedRun,runs=Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[];
+  const sp=d.meta.spawnedRun,runs=Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[];
   let h='';
+  if(subBadge){ // 提交三态徽章：⏳处理中 / 🟢成功（已入池·已派发 run-N）/ 🔴失败（可重试+一句原因）
+    h+=`<span class="subb ${subBadge.st==='ok'?'ok':subBadge.st==='err'?'err':''}">${subBadge.info}`;
+    if(subBadge.st==='err'&&subBadge.retry){window.subRetry=subBadge.retry;h+=`<button class="mb" onclick="subRetry()">重试</button>`}
+    h+='</span>';
+  }
   if(sp)h+=`<button class="mb" disabled title="spawnedRun 已回写，到 Engineering Factory 管理">🏭 已立项 ${sp}</button>`;
   if(runs.length)h+=`<span class="mats" title="spawnedRuns：${esc(runs.join('，'))}">📜 run 历史 ×${runs.length}</span>`;
-  h+=`<button class="mb" style="border-color:var(--primary);color:var(--primary);font-weight:600" onclick="decide('go','build','${st}')">🚀 提交开发</button>`
-    +`<button class="mb" onclick="submitFix('${st}')">🔧 提交升级整改</button>`
+  h+=`<button class="mb" style="border-color:var(--primary);color:var(--primary);font-weight:600" onclick="decide('go','build')">🚀 提交开发</button>`
+    +`<button class="mb" onclick="submitFix()">🔧 提交升级整改</button>`
     +`<button class="mb" onclick="decide('park')">🅿️ 搁置</button>`
     +`<button class="mb" onclick="decide('no-go')">❌ 否决</button>`
     +`<button class="mb danger" onclick="delTopic()">🗑 删除话题</button>`;
@@ -408,35 +478,24 @@ window.delTopic=async id=>{
     $('tidea').textContent='选择或新建一个分析会话';$('tstate').innerHTML='';$('rnb').style.display='none';renderMgmt(null)}
   loadList();
 };
-/* 提交升级整改（对象自动跟随话题，不再手填路径）：
-   ① 话题有 run 历史 → 按工厂项目索引定位关联项目，一键升级迭代（iterate）
-   ② 无 run 历史 → 列工厂项目清单选编号（iterate）；输 / 开头绝对路径则走运维修复（fix） */
-window.submitFix=async st=>{
+/* 提交升级整改（v1.3 语义固化默认，点击直提，不再 confirm/prompt 问对象）：
+   话题有 run 历史 → 按工厂项目索引自动定位关联项目，直派升级迭代（iterate）；
+   无 run 历史 → 红🔴徽章带原因（先 🚀 提交开发、工厂立项后再整改），可重试 */
+window.submitFix=async()=>{
   if(!cur)return;
-  const ok=await decide('go','fix',st);if(!ok)return;
+  const ok=await decide('go','fix');if(!ok)return;
+  setSub('busy','⏳ 定位整改对象…');
   const d=await(await fetch('/api/analyses/'+cur)).json().catch(()=>null);
   const runIds=[...(d&&Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[]),
                 ...((d&&d.meta.spawnedRun)?[d.meta.spawnedRun]:[])];
   let projs=[];try{projs=(await(await fetch('/api/factory/projects')).json().catch(()=>({}))).projects||[]}catch(e){}
-  let mode,repo='',projectId='';
   const mine=projs.find(p=>(p.runs||[]).some(r=>runIds.includes(r)));
-  if(mine){ // 话题路径已明确整改对象：直接确认
-    mode='iterate';projectId=mine.id;
-    if(!confirm('整改对象已随话题定位：项目 '+mine.id+'「'+String(mine.name||'').slice(0,30)+'」（由本话题 run 历史关联）— 建升级迭代 run？'))return;
-  }else{
-    const list=projs.map((p,i)=>(i+1)+') '+p.id+' '+String(p.name||'').slice(0,24)+'（runs:'+(p.runs||[]).length+'）').join('\n');
-    const inp=prompt('本话题无 run 历史 — 选择整改/运维对象：输入项目编号走升级迭代'
-      +(list?'\n\n'+list:'\n（工厂暂无项目）')+'\n；或输入 / 开头的仓库绝对路径走运维修复：');
-    if(inp===null)return;
-    const t=inp.trim(),n=parseInt(t);
-    if(projs.length&&String(n)===t&&n>=1&&n<=projs.length){mode='iterate';projectId=projs[n-1].id}
-    else if(t.startsWith('/')){mode='fix';repo=t}
-    else return alert('没认出对象：请输入项目编号，或以 / 开头的仓库绝对路径');
-  }
+  if(!mine)return setSub('err','🔴 整改失败：本话题无关联工厂项目（先 🚀 提交开发、工厂立项 run 后再整改）',submitFix);
+  setSub('busy','⏳ 已定位项目 '+mine.id+'，派发升级迭代…');
   const r=await(await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:cur,mode,repo,projectId})})).json().catch(()=>({}));
-  if(r.runId)alert('已建整改 run：'+r.runId+'（到 Engineering Factory 看进度）');
-  else alert('转整改失败：'+(r.error||'未知错误'));
+    body:JSON.stringify({id:cur,mode:'iterate',projectId:mine.id})})).json().catch(()=>({}));
+  if(r.runId)setSub('ok','🟢 已派发 '+r.runId+'（到 Engineering Factory 看进度）'); // dispatch 后不可撤销（无 toast 撤销窗）
+  else setSub('err','🔴 派发失败：'+(r.error||'未知错误'),submitFix);
   loadDetail();loadList();
 };
 /* 话题改名：prompt 输入新名 → POST /rename → 刷新列表与详情（侧边栏快捷钮可改非当前会话） */
@@ -468,18 +527,26 @@ $('send').onclick=async()=>{
   $('msg').value='';$('matfn').value='';$('matct').value='';pick={};
   loadDetail();loadList();
 };
-/* 拍板：go 全态可用（已立项=再次提交；归档态=复活提交）；sm=submitMode（build/fix），st=提交时状态（用于确认文案） */
-const goMsg=(st,sm)=>{
-  const base=st==='go'?'该话题已提交过 — 再次提交（先 reply 续轮更新结论更稳）'
-    :(['no-go','park'].includes(st)?`确认复活并提交：话题当前为「${st==='no-go'?'NO-GO 否决':'PARK 搁置'}」归档态，直接提交（不续轮，轮次不变）`
-    :'确认 GO：话题进入立项池（open 态 = 跳过收敛强制提交；工厂选走或 dispatch 时才建 run）');
-  return base+(sm==='fix'?'，本次走升级整改：对象自动随话题 run 历史定位（无需手填路径），建 run 并累积 run 历史':'，本次走开发：待工厂「选话题立项」')+'？'};
-window.decide=async(d,sm,st)=>{
-  if(!confirm(d==='go'?goMsg(st,sm):d==='withdraw'?'确认撤回：话题回到「待拍板」（工厂尚未选走才允许）？':'确认 '+d.toUpperCase()+'：会话归档（产物保留，可复活）？'))return false;
-  const r=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:d,submitMode:sm||'build'})})).json();
-  if(d==='go'&&!r.ok)alert('拍板失败：'+(r.error||'未知错误'));
+/* 拍板：go 全态可用（已立项=再次提交；归档态=复活提交）；sm=submitMode（build/fix）
+   v1.3：go 提交语义默认化 —— 不再弹问题式确认框，点击直提（build 入池带 toast 撤销窗；fix 由 submitFix 接续）；
+   park/no-go/withdraw 保留一次性确认（归档/撤回类破坏性动作不在「提交语义默认」范围） */
+window.decide=async(d,sm,skipConfirm)=>{
+  if(!cur)return false;
+  const isGo=d==='go';
+  if(!isGo&&!skipConfirm&&!confirm(d==='withdraw'?'确认撤回：话题回到「待拍板」（工厂尚未选走才允许）？':'确认 '+d.toUpperCase()+'：会话归档（产物保留，可复活）？'))return false;
+  if(isGo&&sm)setSub('busy','⏳ 提交中…');
+  const r=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:d,submitMode:sm||'build'})})).json().catch(()=>({ok:false,error:'网络错误'}));
+  if(!isGo){loadDetail();loadList();return !!r.ok}
+  if(!r.ok){setSub('err','🔴 提交失败：'+(r.error||'未知错误'),()=>decide(d,sm,true));loadDetail();return false}
+  if(sm==='fix')return true; // 整改链路由 submitFix 接续（徽章由其接管）
+  setSub('ok','🟢 已入池（待工厂「选话题立项」）');
+  toast('已提交立项池',async()=>{ // 撤销窗：入池阶段可用；工厂已选走（spawnedRun 回写）则后端 409 拒绝并给出原因
+    const w=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:'withdraw'})})).json().catch(()=>({}));
+    if(w.ok){toast('已撤销，回到待拍板');subBadge=null;loadDetail();loadList()}
+    else toast('撤销失败：'+(w.error||''));
+  });
   loadDetail();loadList();
-  return !!r.ok;
+  return true;
 };
 renderFilters();loadList();
 setInterval(()=>{loadList();if(cur)loadDetail()},6000);
