@@ -419,7 +419,8 @@ function runFrom(rs,idx,res){
   rs.executing=true;
   const step=()=>{
     const ns=flowNodes(rs.flow);
-    if(idx>=ns.length){rs.executing=false;rs.done=true;persist(rs);emit({type:'all_done',text:'🏁 全部节点验收通过 — 产物已就绪'});if(res)res.end();return}
+    if(idx>=ns.length){rs.executing=false;rs.done=true;persist(rs);activeRuns.delete(rs.dir); // 终态移出执行池（否则泳道/active 列表赖着不走，跨重启才被 bootState 过滤）
+      emit({type:'all_done',text:'🏁 全部节点验收通过 — 产物已就绪'});if(res)res.end();return}
     const n=ns[idx];
     rs.stage=n.id;rs.nodeStartTs=Date.now();rs.nodeStatus[idx]='running';persist(rs);
     emit({type:'node_start',node:n.id,name:n.name,owner:n.owner,entry:n.entry,deliverable:n.deliverable});
