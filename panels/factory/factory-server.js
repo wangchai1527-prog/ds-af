@@ -55,6 +55,37 @@ function recordDeploy(projId,runId,action){
     return pr.deployed});
 }
 function findProjectByRun(runId){try{return((loadProjects().find(p=>(p.runs||[]).includes(runId))||{}).id)||null}catch(e){return null}}
+// deployTo（部署到既有面板 · 2026-11-18 人批）：deploy 阶段除 /apps 指针记账外，可把产物同步进既有面板目录并执行其 deploy.sh（人点上线 = 服务重启授权）
+function validDeployTo(t){ // 须为现存目录绝对路径；runs/ 区、仓库根、/、/root 禁入（防误爆）
+  if(!path.isAbsolute(String(t||'')))return null;
+  const p=path.resolve(String(t));
+  if(p==='/'||p==='/root'||p===RUNDIR||p.startsWith(RUNDIR+path.sep)||p===path.dirname(RUNDIR))return null;
+  try{if(!fs.statSync(p).isDirectory())return null}catch(e){return null}
+  return p;
+}
+function syncDeployTo(root,deployTo){ // 产物 add/overwrite 同步进目标目录（不删目标既有文件；跳过 .git/deploy.sh）+ 执行目标 deploy.sh（服务重启）
+  if(!root)throw new Error('run 无产物（未找到 index.html 根）');
+  let n=0;
+  const walk=(s,d)=>{for(const f of fs.readdirSync(s)){
+    if(f==='.git'||f==='deploy.sh')continue; // 目标自己的部署脚本/版本库不覆盖
+    const a=path.join(s,f),b=path.join(d,f);
+    if(fs.statSync(a).isDirectory())walk(a,b);
+    else{fs.mkdirSync(path.dirname(b),{recursive:true});fs.copyFileSync(a,b);n++}}};
+  walk(root,deployTo);
+  let sh='（无 deploy.sh — 仅同步文件，服务需人工重启）';
+  const script=path.join(deployTo,'deploy.sh');
+  if(fs.existsSync(script)){
+    try{sh=('deploy.sh: '+(execSync('bash '+JSON.stringify(script),{encoding:'utf8',timeout:30000,env:ENV,cwd:deployTo})||'').trim()).slice(0,300)}
+    catch(e){sh='⚠️ deploy.sh 执行失败: '+String(e.message).slice(0,200)}
+  }
+  return{files:n,script:sh};
+}
+function deployRootOf(runDir,manifest){ // 取 run 产物根：iterate 产物在父产品仓（manifest.repo），build 在 run 目录（findIndexHtmlRoot）
+  try{const meta=manifest||JSON.parse(rf(runDir,'manifest.json')||'{}');
+    if((meta.flow||'')==='iterate'&&meta.repo&&fs.existsSync(meta.repo))return meta.repo;
+  }catch(e){}
+  return findIndexHtmlRoot(runDir);
+}
 // v2.2.1 归类自愈（规范程序，非人工/AI 手工清洗）：同 name+repo 的项目自动归并 ——
 // 保留最早项，created 取最早、runs 有序去重并、remote 取首个非空、deployed 取 ts 最新且 history 并集降序裁 20；
 // 启动时自动触发（listen 回调），配合 restore/立项查重（防再犯）构成自动归类闭环。
@@ -544,6 +575,11 @@ http.createServer((req,res)=>{
       projMutate(p=>{ // 只切 projects.json 指针，不动 run 目录（readOnly/纯磁盘 run 可操作）
         const pr=p.find(x=>x.id===(q.projectId||''));
         if(!pr)return{code:404,error:'no project'};
+        if(q.deployTo!==undefined){ // deployTo（面板部署目标）：可设/可清（空串=清除）；设了之后每次上线/补办都会同步产物+跑 deploy.sh
+          if(String(q.deployTo||'')!==''){const v=validDeployTo(q.deployTo);
+            if(!v)return{code:400,error:'deployTo 无效 — 须为现存目录绝对路径，且不得位于 runs/ 或仓库根'}}
+          pr.deployTo=String(q.deployTo||'').trim()||null;
+        }
         let target=q.runId||'';
         if(!target){ // 补办：最新 delivered（终态、未上线收尾）run；fix 流不走 /apps
           for(const rid of [...(pr.runs||[])].reverse()){
@@ -565,9 +601,13 @@ http.createServer((req,res)=>{
         const prev=pr.deployed&&pr.deployed.runId;
         const ts=Date.now();
         pr.deployed={runId:target,ts,history:[{runId:target,ts,action:(q.runId&&prev&&prev!==target)?'rollback':'deploy'},...((pr.deployed&&pr.deployed.history)||[])].slice(0,20)};
-        return{code:200,deployed:pr.deployed,url:'/apps/'+pr.id+'/'};
+        let dep=null; // deployTo：同步产物进既有面板 + deploy.sh（失败不回滚指针，仅回报）
+        if(pr.deployTo){try{const r=syncDeployTo(deployRootOf(path.join(RUNDIR,target),null),pr.deployTo);
+          dep={deployTo:pr.deployTo,files:r.files,script:r.script}}
+        catch(e){dep={deployTo:pr.deployTo,error:String(e.message).slice(0,150)}}}
+        return{code:200,deployed:pr.deployed,url:'/apps/'+pr.id+'/',deploy:dep};
       }).then(r=>{if(!r)return j(res,500,{error:'internal'});
-        if(r.code===200)return j(res,200,{ok:true,deployed:r.deployed,url:r.url});
+        if(r.code===200)return j(res,200,{ok:true,deployed:r.deployed,url:r.url,deploy:r.deploy||null});
         return j(res,r.code,{error:r.error})});
     });
     return;
@@ -701,7 +741,7 @@ http.createServer((req,res)=>{
   }
   if(req.method==='POST'&&u.pathname==='/api/mission/from-plan'){ // 分析台话题立项三通：build(默认)/fix(带 repo)/iterate(带 projectId)；分析产物 = 工厂输入料（非工厂产物）
     let b='';req.on('data',c=>b+=c);req.on('end',()=>{
-      const{analysisDir='',idea='',mode='build',repo='',projectId=''}=JSON.parse(b||'{}');
+      const{analysisDir='',idea='',mode='build',repo='',projectId='',deployTo=''}=JSON.parse(b||'{}');
       const ad=path.resolve(analysisDir);
       if(!ad.startsWith(ANALYSES+path.sep)||!fs.existsSync(ad)||!fs.statSync(ad).isDirectory())
         return j(res,400,{error:'analysisDir 必须位于 '+ANALYSES+' 之下的会话目录'});
@@ -737,6 +777,11 @@ http.createServer((req,res)=>{
       }else if(mode==='iterate'){ // 转升级：话题结论迭代到已交付项目
         const projs=loadProjects();const pr=projs.find(x=>x.id===projectId);
         if(!pr)return j(res,404,{error:'项目 '+projectId+' 不存在'});
+        const dt=String(deployTo||'').trim(); // deployTo：升级交付后可直接部署到既有面板（多轮整改 → 直接启用闭环）
+        if(dt){const v=validDeployTo(dt);
+          if(!v)return j(res,400,{error:'deployTo 无效 — 须为现存目录绝对路径，且不得位于 runs/ 或仓库根'});
+          projMutate(p=>{const x=p.find(y=>y.id===pr.id);if(x)x.deployTo=v});
+        }
         let parent=null,repoDir=null;
         for(const rid of [...(pr.runs||[])].reverse()){const p=path.join(RUNDIR,rid);const r=findIndexHtmlRoot(p);if(r){parent=rid;repoDir=r;break}}
         if(!parent)return j(res,400,{error:'项目 '+pr.id+' 无已交付产品代码，不能转升级'});
@@ -785,7 +830,14 @@ http.createServer((req,res)=>{
           rs.nodeStatus[idx]='done';rs.acceptDetails[idx]='✅ 人工拍板上线 — deployed';persist(rs);
           const pid=rs.projectId||findProjectByRun(rs.id); // 恢复/只读路径下内存无 projectId → 按 runId 反查
           recordDeploy(pid,rs.id,'deploy');
-          rs.events.push({type:'deploy',text:'🚀 已上线 — 稳定地址 /apps/'+(pid||'?')+'/（版本可回退、地址不变）'});
+          let dmsg=''; // deployTo：项目设了面板部署目标 → 产物同步 + deploy.sh 重启（人点上线 = 授权）
+          try{const prj=pid?loadProjects().find(x=>x.id===pid):null;
+            if(prj&&prj.deployTo){
+              const r=syncDeployTo(deployRootOf(rs.dir,null),prj.deployTo);
+              dmsg=' · 已同步部署到面板 '+prj.deployTo+'（'+r.files+' 文件）· '+r.script;
+            }
+          }catch(e){dmsg=' · ⚠️ deployTo 同步失败: '+String(e.message).slice(0,150)}
+          rs.events.push({type:'deploy',text:'🚀 已上线 — 稳定地址 /apps/'+(pid||'?')+'/（版本可回退、地址不变）'+dmsg});
           W(res,rs.events[rs.events.length-1]);
           runFrom(rs,idx+1,res);
         }

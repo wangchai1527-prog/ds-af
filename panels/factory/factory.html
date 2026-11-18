@@ -396,6 +396,18 @@ window.deployProject=async id=>{
     if(r.error)fmToast('补办失败：'+r.error,'err');else{fmToast('已部署 '+r.deployed.runId+' → '+r.url);loadRuns()}
   }});
 };
+window.deployToDlg=(id,cur)=>{ // 📍 面板部署目标：设了之后每次上线/补办 = 同步产物进该目录 + 执行其 deploy.sh（多轮整改 → 直接启用）
+  fmOpen({title:'📍 面板部署目标',desc:'设置后：上线/补办部署除 /apps 外，还会把产物同步进该目录并执行其 deploy.sh（服务重启）。留空提交 = 清除目标。',
+    fields:[{id:'dpl-to',label:'面板目录（绝对路径）',placeholder:'/root/.dsh/ds-af/panels/plan',maxlen:200}],
+    confirmText:'保存并部署',onOk:async v=>{
+      const body={projectId:id,deployTo:v['dpl-to']};if(cur)body.runId=cur; // 已上线：保存目标即重同步当前版本
+      const r=await(await fetch('/api/projects/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();
+      if(r.error&&!/无可补办部署/.test(r.error)){fmToast('设置失败：'+r.error,'err');return}
+      fmToast(r.error?('目标已保存，待有交付 run 再上线（'+r.error+'）')
+        :(r.deploy&&r.deploy.files!=null?('已部署 '+r.deployed.runId+' · 同步 '+r.deploy.files+' 文件 → '+r.deploy.deployTo):('已部署 '+r.deployed.runId+' → '+r.url)));
+      loadRuns();
+    }});
+};
 window.rollbackDeploy=async(pid,rid)=>{
   fmOpen({title:'↩️ 回退部署版本',desc:'把 /apps/'+pid+'/ 指向 '+rid+'（切 deployed 指针，不动 run 内 git —— 与 run 级「回滚」不同）',confirmText:'回退到此版本',onOk:async()=>{
     const r=await(await fetch('/api/projects/deploy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectId:pid,runId:rid})})).json();
@@ -457,8 +469,10 @@ function deployArea(p){
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b style="font-size:12.5px">🚀 部署</b>
       ${d?'<span class="st ok">🚀 已上线</span>':'<span style="font-size:11px;color:var(--muted)">未上线</span>'}
       <div style="flex:1"></div>
+      <button class="mbtn" onclick="deployToDlg('${p.id}','${d?esc(d.runId):''}')" title="产物同步进既有面板目录 + 执行其 deploy.sh">📍 面板部署</button>
       <button class="mbtn" style="border-color:var(--ok);color:var(--ok)" onclick="deployProject('${p.id}')">➕ 补办部署</button>
     </div>
+    ${p.deployTo?`<div style="font-size:11px;color:var(--warn);margin-top:5px;font-family:var(--mono)">📍 面板目标: ${esc(p.deployTo)}（上线/补办时同步产物 + 跑 deploy.sh）</div>`:''}
     ${d?`<div style="font-size:11.5px;color:var(--muted);margin-top:6px;font-family:var(--mono)">当前版本: ${esc(d.runId)} · ${new Date(d.ts).toLocaleString()}</div>
     <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
       <input readonly value="${esc(url)}" style="flex:1;min-width:200px;font-size:11px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:var(--mono);background:#fff">

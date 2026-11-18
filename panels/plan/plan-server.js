@@ -11,10 +11,12 @@ fs.mkdirSync(ADIR,{recursive:true});
 /* ---------- 磁盘基元 ---------- */
 const rf=(d,f)=>{try{return fs.readFileSync(path.join(d,f),'utf8')}catch(e){return null}};
 const log=(d,ev)=>{try{fs.appendFileSync(path.join(d,'events.jsonl'),JSON.stringify({ts:Date.now(),...ev})+'\n')}catch(e){}};
-/* ---------- 话题目录基元（v1.1：会话挂 analyses/<topic>/an-*；根级 an-* = 历史未分组） ---------- */
-const NO_TOPIC='未分组';
+/* ---------- 话题目录基元（v1.1：会话挂 analyses/<topic>/an-*；根级 an-* = 历史待整理） ---------- */
+const NO_TOPIC='待整理'; // DSH 式：无归属存量统一进「待整理」桶，人工归位（PRD D4=C，不自动猜测）
+const DIR_ROOT='/root'; // 目录树选择器根（DSH「Select Workspace Directory」同源：Home=/root）
+const slugTopic=t=>String(t).replace(/[\\/:*?"<>|]+/g,'_').replace(/\.\./g,'').trim().slice(0,60);
 function topicDirs(){try{return fs.readdirSync(ADIR,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('an-')).map(e=>e.name)}catch(e){return[]}}
-function readMeta(id){ // 先根级（历史未分组）后各话题目录逐层找
+function readMeta(id){ // 先根级（历史待整理）后各话题目录逐层找
   if(!/^an-[\w-]+$/.test(id))return null;
   for(const base of [ADIR,...topicDirs().map(t=>path.join(ADIR,t))]){
     const d=path.join(base,id);const m=rf(d,'meta.json');if(m)return{dir:d,meta:JSON.parse(m)}}
@@ -27,7 +29,9 @@ function listAnalyses(){
       submitMode:j.submitMode||'build',spawnedRuns:Array.isArray(j.spawnedRuns)?j.spawnedRuns.length:0,parent:j.parent||null})};
   try{
     for(const id of fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,id),NO_TOPIC);
-    for(const t of topicDirs())for(const id of fs.readdirSync(path.join(ADIR,t)).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,t,id),t);
+    for(const t of topicDirs())for(const id of fs.readdirSync(path.join(ADIR,t)).filter(d=>d.startsWith('an-'))){
+      const d=path.join(ADIR,t,id);const m=rf(d,'meta.json');
+      push(id,d,m?(JSON.parse(m).topic||t):t)}
   }catch(e){}
   return out.sort((a,b)=>(b.updated||'').localeCompare(a.updated||''))}
 
@@ -113,7 +117,9 @@ const srv=http.createServer(async(req,res)=>{
       rounds[f]=rf(s.dir,path.join('rounds',f))||''}catch(e){}
     const docs={IDEA:rf(s.dir,'IDEA.md')||'',RESEARCH:rf(s.dir,'RESEARCH.md')||'',BRIEF:rf(s.dir,'BRIEF.md')||''};
     const mats=[];try{for(const f of fs.readdirSync(path.join(s.dir,'materials')))mats.push(f)}catch(e){}
-    return json(res,200,{meta:s.meta,rounds,docs,materials:mats,running:running.has(m[1])});
+    let evs=[];try{evs=rf(s.dir,'events.jsonl').split('\n').filter(Boolean).slice(-100)
+      .map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){}
+    return json(res,200,{meta:s.meta,rounds,docs,materials:mats,running:running.has(m[1]),events:evs});
   }
   if(req.method==='POST'&&u==='/api/new'){
     const{idea,topic,parent}=await body(req);
@@ -125,11 +131,10 @@ const srv=http.createServer(async(req,res)=>{
     if(p){topicName=p.meta.topic||NO_TOPIC;baseDir=path.dirname(p.dir)} // 续接：落父话题同目录
     else{
       const t=String(topic||'').trim();
-      if(!t)return json(res,422,{error:'新建会话须指定话题目录（topic：选已有或新建），不能无归属漂移'});
-      if(t===NO_TOPIC)return json(res,422,{error:'「未分组」是历史老会话的保留桶，不可作为新话题目录 — 请为会话起一个真实话题名'});
-      topicName=t.replace(/[\\/:*?"<>|]+/g,'-').replace(/\.\./g,'').trim().slice(0,40);
-      if(!topicName)return json(res,422,{error:'话题目录名非法'});
-      baseDir=path.join(ADIR,topicName);fs.mkdirSync(baseDir,{recursive:true});
+      if(!t)return json(res,422,{error:'新建会话须先选归属目录（topic），不能无归属漂移'});
+      if(t===NO_TOPIC)return json(res,422,{error:'「待整理」是无归属存量的保留桶，不可作为归属 — 请先选一个真实目录'});
+      topicName=t.slice(0,60);
+      baseDir=path.join(ADIR,slugTopic(t));fs.mkdirSync(baseDir,{recursive:true}); // 磁盘桶名=净化 slug（label 含 / 时落单层桶）
     }
     const id='an-'+Date.now();const d=path.join(baseDir,id);
     fs.mkdirSync(path.join(d,'rounds'),{recursive:true});fs.mkdirSync(path.join(d,'materials'));
@@ -196,6 +201,35 @@ const srv=http.createServer(async(req,res)=>{
     s.meta.state=decision;writeMeta(s.dir,s.meta);
     log(s.dir,{ev:'decide',decision,note:note||''});
     return json(res,200,{ok:true,state:decision});
+  }
+  if(req.method==='GET'&&u.startsWith('/api/dirs')){ // DSH 式目录树数据源（Select Workspace Directory）：base 相对 /root，只列目录、防逃逸
+    const q=new URL(req.url,'http://x').searchParams.get('base')||'';
+    const base=path.resolve(DIR_ROOT,q);
+    if(base!==DIR_ROOT&&!base.startsWith(DIR_ROOT+path.sep))return json(res,400,{error:'base 须位于 '+DIR_ROOT+' 之内'});
+    let st;try{st=fs.statSync(base)}catch(e){return json(res,404,{error:'目录不存在'})}
+    if(!st.isDirectory())return json(res,400,{error:'base 不是目录'});
+    let dirs=[];
+    try{dirs=fs.readdirSync(base,{withFileTypes:true})
+      .filter(e=>e.isDirectory()&&!e.name.startsWith('.')&&e.name!=='node_modules'&&e.name!='.cache')
+      .slice(0,200).map(e=>({name:e.name,hasChildren:true}))}catch(e){}
+    return json(res,200,{base:q||'',dirs});
+  }
+  if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/assign$/))){ // 归位/移动桶：待整理→目标目录（PRD D4=C 人工归位；不做自动猜测）
+    const{topic}=await body(req);const s=readMeta(m[1]);
+    if(!s)return json(res,404,{error:'会话不存在'});
+    if(running.has(m[1]))return json(res,409,{error:'本轮分析进行中，不能归位'});
+    const t=String(topic||'').trim();
+    if(!t||t===NO_TOPIC)return json(res,422,{error:'归位须指定目标目录（不能归回「待整理」）'});
+    const label=t.slice(0,60);
+    const dstBase=path.join(ADIR,slugTopic(t));
+    const dst=path.join(dstBase,m[1]);
+    if(s.dir!==dst){ // 同桶归位幂等
+      if(fs.existsSync(dst))return json(res,409,{error:'目标已存在同名会话目录'});
+      fs.mkdirSync(dstBase,{recursive:true});fs.renameSync(s.dir,dst);
+    }
+    s.meta.topic=label;writeMeta(dst,s.meta);
+    log(dst,{ev:'assign',topic:label});
+    return json(res,200,{ok:true,topic:label});
   }
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/rename$/))){ // 话题改名：只动 meta.idea，轮次与其余 meta 字段不变
     const{title}=await body(req);const s=readMeta(m[1]);

@@ -116,4 +116,33 @@ test('混主责合同：qa 属主任务未标 done 不阻断 coding（验收只�
   assert.equal(codingNode.status,'done','coding 节点应验收通过');
   assert.ok((codingNode.acceptDetail||'').includes('coding任务done:2/3'),'验收明细应显示 2/3（qa 任务豁免）');
 });
+test('deployTo 面板部署：设目标→上线即同步产物+跑 deploy.sh · 非法目标 400 · 空串清除',async()=>{
+  // 造一个 delivered 终态 run（build 链 9 节点、末位 deploy=skipped）+ 目标面板目录（带 deploy.sh 与既有文件）
+  const rid='run-dt-1';fs.mkdirSync(path.join(RUNROOT,rid,'product'),{recursive:true});
+  fs.writeFileSync(path.join(RUNROOT,rid,'product','index.html'),'<h1>dt</h1>');
+  fs.writeFileSync(path.join(RUNROOT,rid,'manifest.json'),JSON.stringify({run_id:rid,flow:'build',repo:null}));
+  fs.writeFileSync(path.join(RUNROOT,rid,'nodes.json'),JSON.stringify({flow:'build',nodeStatus:['done','done','done','done','done','done','done','done','skipped']}));
+  fs.writeFileSync(PROJ,JSON.stringify([{id:'P-901',name:'面板部署验证',repo:null,created:new Date().toISOString(),runs:[rid]}]));
+  const panel=path.join(ROOT,'panel');fs.mkdirSync(panel,{recursive:true});
+  fs.writeFileSync(path.join(panel,'keep.txt'),'既有文件不可被清掉');
+  fs.writeFileSync(path.join(panel,'deploy.sh'),'#!/bin/bash\necho ran > deploy-ran.txt\n');
+  // 非法目标：相对路径 / runs/ 区内 / 不存在目录 → 400
+  assert.equal((await api('POST','/api/projects/deploy',{projectId:'P-901',deployTo:'relative/path'})).code,400,'相对路径应 400');
+  assert.equal((await api('POST','/api/projects/deploy',{projectId:'P-901',deployTo:path.join(RUNROOT,'runs-in')})).code,400,'runs/ 区内应 400');
+  assert.equal((await api('POST','/api/projects/deploy',{projectId:'P-901',deployTo:'/no/such/dir'})).code,400,'不存在目录应 400');
+  // 合法：设 deployTo + 补办部署 → 产物同步 + deploy.sh 执行 + 指针记账
+  const r=await api('POST','/api/projects/deploy',{projectId:'P-901',deployTo:panel});
+  assert.equal(r.code,200,r.body.error||'');
+  assert.ok(fs.existsSync(path.join(panel,'index.html')),'产物应同步进面板目录');
+  assert.ok(fs.existsSync(path.join(panel,'keep.txt')),'面板既有文件不应被删');
+  assert.ok(fs.existsSync(path.join(panel,'deploy-ran.txt')),'deploy.sh 应被执行');
+  assert.ok(r.body.deploy&&r.body.deploy.files>=1,'响应应带同步文件数');
+  const pr=JSON.parse(fs.readFileSync(PROJ,'utf8')).find(x=>x.id==='P-901');
+  assert.equal(pr.deployTo,panel,'deployTo 应持久化到 projects.json');
+  assert.equal(pr.deployed.runId,rid,'deployed 指针应记账');
+  // 空串 = 清除目标
+  const c=await api('POST','/api/projects/deploy',{projectId:'P-901',deployTo:''});
+  assert.equal(c.code,200,c.body.error||'');
+  assert.equal(JSON.parse(fs.readFileSync(PROJ,'utf8')).find(x=>x.id==='P-901').deployTo,null,'空串应清除 deployTo');
+});
 after(()=>{try{child.kill('SIGKILL')}catch(e){};try{fs.rmSync(ROOT,{recursive:true,force:true})}catch(e){}});

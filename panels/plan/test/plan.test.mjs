@@ -17,8 +17,27 @@ let sid=null;
 test('/api/new 无 topic → 422 拒建（杜绝无归属漂移会话）',async()=>{
   const r=await api('POST','/api/new',{idea:'没有归属目录的漂移会话'});
   assert.equal(r.code,422);
-  const r2=await api('POST','/api/new',{idea:'想落进未分组保留桶的会话',topic:'未分组'});
-  assert.equal(r2.code,422,'「未分组」保留桶不可作新话题目录');
+  const r2=await api('POST','/api/new',{idea:'想落进待整理保留桶的会话',topic:'待整理'});
+  assert.equal(r2.code,422,'「待整理」保留桶不可作归属');
+});
+test('/api/dirs 目录树：根列表 200 · base 逃逸 400 · 非目录 400',async()=>{
+  const r=await api('GET','/api/dirs?base=');
+  assert.equal(r.code,200);assert.ok(Array.isArray(r.body.dirs));
+  assert.equal((await api('GET','/api/dirs?base=../etc')).code,400,'base 逃逸 /root 应 400');
+  assert.equal((await api('GET','/api/dirs?base=.dsh/ds-af/panels/plan/plan-server.js')).code,400,'非目录应 400（base 相对 /root）');
+});
+test('归位 assign：待整理/错桶会话移入目标桶 · meta.topic=标签 · 磁盘目录随迁',async()=>{
+  const r=await api('POST','/api/new',{idea:'归位验证专用会话：落错桶待整理',topic:'临时桶A'});
+  assert.equal(r.code,200);const id=r.body.id;
+  await poll(()=>fs.existsSync(path.join(ADIR,'临时桶A',id,'rounds','r001-out.md')));
+  const a=await api('POST','/api/analyses/'+id+'/assign',{topic:'alpha-forge/panels'});
+  assert.equal(a.code,200);assert.equal(a.body.topic,'alpha-forge/panels');
+  assert.ok(fs.existsSync(path.join(ADIR,'alpha-forge_panels',id,'meta.json')),'应迁入 slug 桶目录');
+  assert.ok(!fs.existsSync(path.join(ADIR,'临时桶A',id)),'原桶应无残留');
+  const list=await api('GET','/api/analyses');
+  const me=list.body.analyses.find(x=>x.id===id);
+  assert.equal(me.topic,'alpha-forge/panels','列表按 label 分桶');
+  assert.equal((await api('POST','/api/analyses/'+id+'/assign',{topic:'待整理'})).code,422,'不可归回待整理');
 });
 test('/api/new 建会话（话题目录归属）→ analyses/<topic>/an-* · meta.topic · 自动跑第 1 轮',async()=>{
   const r=await api('POST','/api/new',{idea:'做一个并发流水线观测面板的预研分析',topic:'工厂面板'});
@@ -50,7 +69,7 @@ test('续接：带 parent 新建 → 同话题目录 · 父 BRIEF+轮次注入 m
   const pr=fs.readFileSync(path.join(cd,'materials','parent-rounds.md'),'utf8');
   assert.ok(pr.includes('r001-out.md')&&pr.includes('父第 2 轮结论'),'父轮次结论应注入');
   const meta=JSON.parse(fs.readFileSync(path.join(cd,'meta.json'),'utf8'));
-  assert.equal(meta.parent,pid);assert.equal(meta.topic,'未分组');
+  assert.equal(meta.parent,pid);assert.equal(meta.topic,'待整理','父无归属 → 续接落根级待整理桶');
   const inn=JSON.parse(fs.readFileSync(path.join(cd,'rounds','r001-in.json'),'utf8'));
   assert.equal(inn.type,'continue');assert.equal(inn.parent,pid);
   await poll(()=>fs.existsSync(path.join(cd,'rounds','r001-out.md')));
