@@ -181,8 +181,15 @@ const ITERNODES=[
   prompt:(i,rs)=>`你是 Engineering Manager。读 llmwiki/PRD.md 和目标仓库 ${rs.repo} 的现有代码结构，写 llmwiki/tasks.json：JSON数组(2-5个增量任务)，每项含 task_id,objective,owner_agent(coding|qa),acceptance_criteria,git_branch。改动必须最小化。`,
   accept:d=>{try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));return{pass:Array.isArray(t)&&t.length>=1&&t.every(x=>x.task_id&&x.objective&&x.acceptance_criteria),detail:t.length+' 份增量合同'}}catch(e){return{pass:false,detail:'解析失败'}}}},
  {id:'coding',name:'增量开发',owner:'Coding Agent',entry:'合同通过',deliverable:'父仓代码 diff',
-  prompt:(i,rs)=>`你是 Coding Agent。读 llmwiki/PRD.md 和 llmwiki/tasks.json，到目标仓库 ${rs.repo} 实施增量改动：外科式最小修改，禁止重构无关代码，每完成一个任务在 llmwiki/tasks.json 标 status:done。改完运行可运行的验证。回执 [STATUS]/[CHANGES]/[TESTS]。`,
-  accept:(d,rs)=>{try{const out=execSync('git -C '+rs.repo+' status --short 2>/dev/null||echo NO',{encoding:'utf8',env:ENV}).trim();let all=true;try{all=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json')).every(t=>t.status==='done')}catch(e){}return{pass:!!out&&out!=='NO'&&all,detail:'父仓变更 '+out.split('\n').length+' 文件 · 任务全done:'+all}}catch(e){return{pass:false,detail:'无法检测'}}}},
+  prompt:(i,rs)=>`你是 Coding Agent。读 llmwiki/PRD.md 和 llmwiki/tasks.json，到目标仓库 ${rs.repo} 实施增量改动：外科式最小修改，禁止重构无关代码，每完成一个任务在 llmwiki/tasks.json 标 status:done（只标 owner_agent=coding 的任务；qa 任务留给回归验证节点，勿动其状态）。改完运行可运行的验证。回执 [STATUS]/[CHANGES]/[TESTS]。`,
+  accept:(d,rs)=>{try{const out=execSync('git -C '+rs.repo+' status --short 2>/dev/null||echo NO',{encoding:'utf8',env:ENV}).trim();
+    const isDone=x=>String(x.status||'').trim().toLowerCase()==='done'||x.done===true;
+    let all=false,pending='tasks.json 缺失/不可解析';
+    try{const t=JSON.parse(rf(path.join(d,'llmwiki'),'tasks.json'));
+      const mine=t.filter(x=>!x.owner_agent||x.owner_agent==='coding'); // 只验 coding 任务（qa 任务归回归验证节点——开发节点拦不了也不该拦，与 build 链同判）
+      pending=mine.filter(x=>!isDone(x)).map(x=>x.task_id).join(',')||'';
+      all=mine.every(isDone)}catch(e){}
+    return{pass:!!out&&out!=='NO'&&all,detail:'父仓变更 '+out.split('\n').length+' 文件 · coding任务'+(all?'全done✓':('待:'+pending||'?'))}}catch(e){return{pass:false,detail:'无法检测'}}}},
  {id:'qa',name:'回归验证',owner:'QA Agent',entry:'增量完成',deliverable:'llmwiki/QA-Report.md',
   prompt:(i,rs)=>`你是 QA Agent（只读+可运行，禁改代码）。对照 llmwiki/PRD.md 验收标准，在仓库 ${rs.repo} 逐项验证增量功能，并抽查原有功能无回归。写 llmwiki/QA-Report.md（结论含 PASS/PARTIAL/FAIL）。`,
   accept:d=>{const c=rf(path.join(d,'llmwiki'),'QA-Report.md')||'';return{pass:c.length>150&&/PASS|PARTIAL|FAIL/.test(c),detail:'结论:'+(c.match(/PASS|PARTIAL|FAIL/g)||[]).join(',')}}},
@@ -333,7 +340,8 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
     // 极端态自愈——delivery 已 done 但 deploy 仍 pending 且无 awaiting 记录（如旧版中断）→ 补挂 deploy 闸防卡死。
     const chain=flowNodes(st.flow||'build');
     let awaiting=st.awaiting||null;
-    if(!awaiting&&chain.length&&chain[chain.length-1].id==='deploy'&&ns.length===chain.length&&ns[ns.length-1]==='pending')
+    if(!awaiting&&chain.length&&chain[chain.length-1].id==='deploy'&&ns.length===chain.length&&ns[ns.length-1]==='pending'
+      &&ns[ns.length-2]==='done') // 前置：delivery 已 done——缺此条件会把一切未跑到部署的 run 重启即误挂 deploy 闸（/api/retry 拒绝、并发池捞不回，永久卡死）
       awaiting={gate:'deploy',nodeIdx:ns.length-1};
     let repo=null;try{repo=(JSON.parse(rf(dir,'manifest.json')||'{}').repo)||null}catch(e){}
     const rs={dir,id:path.basename(dir),idea:st.idea||'(未知)',flow:st.flow||'build',repo,parentProject:null,stage:null,
@@ -786,12 +794,13 @@ http.createServer((req,res)=>{
         }
         let parent=null,repoDir=null;
         for(const rid of [...(pr.runs||[])].reverse()){const p=path.join(RUNDIR,rid);const r=findIndexHtmlRoot(p);if(r){parent=rid;repoDir=r;break}}
-        if(!parent)return j(res,400,{error:'项目 '+pr.id+' 无已交付产品代码，不能转升级'});
+        if(!repoDir&&pr.repo&&fs.existsSync(pr.repo)&&fs.statSync(pr.repo).isDirectory())repoDir=pr.repo; // 项目全是 fix run（产品在 pr.repo 本体，非 run 目录）时回退仓根，否则误拦「无已交付产品代码」
+        if(!repoDir)return j(res,400,{error:'项目 '+pr.id+' 无已交付产品代码，不能转升级'});
         dir=newRunDir('run-');scaffold(dir,'iterate',ideaText,repoDir);copyAnalysis(dir);
         rs={dir,id:path.basename(dir),idea:ideaText,flow:'iterate',repo:repoDir,parentProject:pr.id,stage:null,
           nodeStatus:ITERNODES.map(_=>'pending'),acceptDetails:[],gate:false,awaiting:null,
           events:[],artifacts:[],done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null};
-        flowText='⬆️ 升级迭代流（来自 Idea PLAN 话题 '+path.basename(ad)+' · 项目 '+pr.id+' · 基于 '+parent+' 产品）';
+        flowText='⬆️ 升级迭代流（来自 Idea PLAN 话题 '+path.basename(ad)+' · 项目 '+pr.id+' · 基于 '+(parent||pr.repo)+' 产品）';
       }else{ // build：既有「选话题立项」
         dir=newRunDir('run-');scaffold(dir,'build',ideaText,null);copyAnalysis(dir);
         rs={dir,id:path.basename(dir),idea:ideaText,flow:'build',repo:null,parentProject:null,stage:null,
