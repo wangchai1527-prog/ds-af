@@ -10,9 +10,51 @@ const FACTORY=process.env.FACTORY_URL||'http://127.0.0.1:8794'; // 工厂地址�
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:/usr/local/bin:/usr/bin:/bin'};
 fs.mkdirSync(ADIR,{recursive:true});
 
+/* ---------- v1.4 图片通路限额（单一真源，前端提示文案与此对齐）：单张 ≤5MB · 单次 ≤4 张 · 每会话 ≤40 张 ---------- */
+const IMG_MAX_BYTES=5*1024*1024,IMG_MAX_PER_REQ=4,IMG_MAX_PER_SESSION=40;
+const IMG_EXT={'png':'image/png','jpg':'image/jpeg','jpeg':'image/jpeg','gif':'image/gif','webp':'image/webp'}; // 扩展名/mime 白名单（md 供文本材料复用读取端点）
+const IMG_MAGIC={png:Buffer.from([0x89,0x50,0x4e,0x47]),jpg:Buffer.from([0xff,0xd8,0xff]),jpeg:Buffer.from([0xff,0xd8,0xff]),gif:Buffer.from([0x47,0x49,0x46])}; // 魔数抽验（防改扩展名伪装；webp 走 RIFF+WEBP 双验）
+
 /* ---------- 磁盘基元 ---------- */
 const rf=(d,f)=>{try{return fs.readFileSync(path.join(d,f),'utf8')}catch(e){return null}};
 const log=(d,ev)=>{try{fs.appendFileSync(path.join(d,'events.jsonl'),JSON.stringify({ts:Date.now(),...ev})+'\n')}catch(e){}};
+/* ---------- v1.4 图片接收：纯校验+解码（不落盘，可先于目录创建调用） ---------- */
+function parseImages(images){
+  if(images===undefined||images===null)return{imgs:[]};
+  if(!Array.isArray(images))return{error:'images 须为数组'};
+  if(!images.length)return{imgs:[]};
+  if(images.length>IMG_MAX_PER_REQ)return{error:'单次最多提交 '+IMG_MAX_PER_REQ+' 张图片'};
+  const imgs=[];
+  for(const im of images){
+    const orig=String((im&&im.filename)||'').slice(0,40); // 原文件名仅截 40 字符记日志备查（不信任、不落盘）
+    const ext=String((im&&im.filename)||'').split('.').pop().toLowerCase();
+    if(!IMG_EXT[ext])return{error:'图片仅支持 png/jpg/jpeg/gif/webp：'+(orig||'（未命名）')};
+    let data=String((im&&im.data)||'').replace(/^data:image\/[\w.+-]+;base64,/,''); // dataURL 前缀允许携带，服务端剥
+    let buf;try{buf=Buffer.from(data,'base64')}catch(e){return{error:'图片 base64 解码失败：'+orig}}
+    if(!buf.length)return{error:'图片内容为空：'+orig};
+    if(buf.length>IMG_MAX_BYTES)return{error:'单张图片不可超过 5MB：'+orig+'（'+(buf.length/1048576).toFixed(1)+'MB）'};
+    const mag=IMG_MAGIC[ext];
+    if(mag&&!buf.slice(0,mag.length).equals(mag))return{error:'图片内容与扩展名不符（魔数抽验失败）：'+orig};
+    if(ext==='webp'&&(buf.slice(0,4).toString('latin1')!=='RIFF'||buf.slice(8,12).toString('latin1')!=='WEBP'))
+      return{error:'图片内容与扩展名不符（魔数抽验失败）：'+orig};
+    imgs.push({buf,ext,orig});
+  }
+  return{imgs};
+}
+/* ---------- v1.4 图片落盘：服务端统一改名 img-<YYYYMMDD-HHmmss>-<seq>.<ext>（不信任客户端原名） ---------- */
+function storeImages(dir,imgs){
+  if(!imgs.length)return{names:[]};
+  const mdir=path.join(dir,'materials');
+  try{fs.mkdirSync(mdir,{recursive:true})}catch(e){}
+  let cnt=0;try{cnt=fs.readdirSync(mdir).filter(f=>f.startsWith('img-')).length}catch(e){}
+  if(cnt+imgs.length>IMG_MAX_PER_SESSION)return{error:'每会话图片总数上限 '+IMG_MAX_PER_SESSION+' 张（已有 '+cnt+' 张），请清理 materials/ 后再贴'};
+  const t=new Date(),p2=n=>String(n).padStart(2,'0');
+  const stamp=''+t.getFullYear()+p2(t.getMonth()+1)+p2(t.getDate())+'-'+p2(t.getHours())+p2(t.getMinutes())+p2(t.getSeconds());
+  const names=imgs.map((im,i)=>'img-'+stamp+'-'+p2(cnt+i+1)+'.'+im.ext); // 序号以现有 img- 数为基，同秒多请求不碰撞
+  imgs.forEach((im,i)=>fs.writeFileSync(path.join(mdir,names[i]),im.buf));
+  for(let i=0;i<imgs.length;i++)log(dir,{ev:'material',kind:'image',filename:names[i],bytes:imgs[i].buf.length,orig:imgs[i].orig});
+  return{names};
+}
 /* ---------- 话题目录基元（v1.1：会话挂 analyses/<topic>/an-*；根级 an-* = 历史待整理） ---------- */
 const NO_TOPIC='待整理'; // DSH 式：无归属存量统一进「待整理」桶，人工归位（PRD D4=C，不自动猜测）
 // v1.3 目录树读写分层：读/选全局根放开（+系统目录黑名单）；增/删收紧 /root 子树 + 保护路径（BRIEF v1.3 D4-A）
@@ -89,6 +131,7 @@ function roundPrompt(meta,round){
 ## 任务（第 ${round} 轮）
 读 meta.json、rounds/ 下全部历史轮次（r*-in.json 是人的拍板输入，r*-out.md 是往轮分析）、
 活文档 IDEA.md / RESEARCH.md / BRIEF.md（不存在则本轮创建/更新）、materials/ 下人喂的料。
+materials/ 下 img-* 图片是人提供的截图/设计稿/照片，必须用 Read 工具逐张查看并把图中信息纳入分析（UI 意图、数据、报错现场等），在 out.md 中引用所参考的图片文件名。
 然后写出 rounds/r${String(round).padStart(3,'0')}-out.md，并同步更新活文档。
 ${parentBlock}
 
@@ -138,9 +181,23 @@ const srv=http.createServer(async(req,res)=>{
       .map(l=>{try{return JSON.parse(l)}catch(e){return null}}).filter(Boolean)}catch(e){}
     return json(res,200,{meta:s.meta,rounds,docs,materials:mats,running:running.has(m[1]),events:evs});
   }
+  if(req.method==='GET'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/materials\/([^\/]+)$/))){ // v1.4：材料读取端点（图片回显 + 文本材料复用）
+    const s=readMeta(m[1]);if(!s)return json(res,404,{error:'会话不存在'});
+    let file;try{file=decodeURIComponent(m[2])}catch(e){return json(res,400,{error:'文件名编码非法'})}
+    if(/[\/\\]|\.\./.test(file))return json(res,400,{error:'文件名非法（禁止路径分隔符/../）'}); // 防逃逸（与 materials 文本写入同源校验）
+    const fp=path.join(s.dir,'materials',file);
+    let st;try{st=fs.statSync(fp)}catch(e){return json(res,404,{error:'文件不存在：'+file})}
+    if(!st.isFile())return json(res,404,{error:'不是文件：'+file});
+    const ext=file.split('.').pop().toLowerCase();
+    const ct=IMG_EXT[ext]||(ext==='md'?'text/markdown; charset=utf-8':'application/octet-stream');
+    const hdr={'Content-Type':ct};
+    if(IMG_EXT[ext])hdr['Cache-Control']='public, max-age=86400'; // img-命名含时间戳+序号不重写，缓存安全
+    return res.writeHead(200,hdr),res.end(fs.readFileSync(fp));
+  }
   if(req.method==='POST'&&u==='/api/new'){
-    const{idea,topic,parent}=await body(req);
+    const{idea,topic,parent,images}=await body(req);
     if(!idea||idea.trim().length<5)return json(res,422,{error:'想法太短（≥5 字）'});
+    const pi=parseImages(images);if(pi.error)return json(res,400,{error:pi.error}); // v1.4：图片纯校验前置（失败不留会话目录残留）
     // v1.1：归属必填 —— 须带 topic（选已有或新建话题目录），或带 parent 续接（继承父话题目录）
     let p=null;
     if(parent){p=readMeta(parent);if(!p)return json(res,422,{error:'父话题 '+parent+' 不存在，无法续接'})}
@@ -166,8 +223,10 @@ const srv=http.createServer(async(req,res)=>{
     const meta={id,topic:topicName,idea:idea.trim(),state:'open',round:1,created:new Date().toISOString(),updated:null,
       spawnedRun:null,parent:p?p.meta.id:null};
     writeMeta(d,meta);
-    fs.writeFileSync(path.join(d,'rounds','r001-in.json'),JSON.stringify(p?
-      {type:'continue',parent:p.meta.id,text:idea.trim()}:{type:'idea',text:idea.trim()},null,1));
+    const si=storeImages(d,pi.imgs);if(si.error)return json(res,400,{error:si.error}); // v1.4：落盘（新会话目录刚建，总量闸天然不过界）
+    const r1in=p?{type:'continue',parent:p.meta.id,text:idea.trim()}:{type:'idea',text:idea.trim()};
+    if(si.names.length)r1in.images=si.names; // 只加字段：无图保持原结构（旧客户端/旧轮次零影响）
+    fs.writeFileSync(path.join(d,'rounds','r001-in.json'),JSON.stringify(r1in,null,1));
     log(d,{ev:'created',topic:topicName,parent:p?p.meta.id:null,idea:idea.trim().slice(0,80)});
     runRound(id);
     return json(res,200,{id,topic:topicName});
@@ -177,6 +236,7 @@ const srv=http.createServer(async(req,res)=>{
     if(!s)return json(res,404,{error:'会话不存在'});
     if(running.has(m[1]))return json(res,409,{error:'本轮分析进行中，请稍候'});
     const{answers,message,materials}=p;
+    const pi=parseImages(p.images);if(pi.error)return json(res,400,{error:pi.error}); // v1.4：图片校验（纯校验，失败不落任何文件）
     if(Array.isArray(materials))for(const f of materials){
       if(!f.filename||/[\/\\]|\.\./.test(f.filename)||typeof f.content!=='string')
         return json(res,400,{error:'materials.filename 非法（禁止路径分隔符/../）或 content 缺失'});
@@ -187,8 +247,11 @@ const srv=http.createServer(async(req,res)=>{
     if(!message&&!answers||(answers&&typeof answers!=='object'))return json(res,422,{error:'reply 需 answers 或 message'});
     const revived=['no-go','park'].includes(s.meta.state);
     const round=s.meta.round+1;
+    const si=storeImages(s.dir,pi.imgs);if(si.error)return json(res,400,{error:si.error}); // v1.4：落盘后才写轮次输入（拒绝路径无残留）
+    const rin={type:revived?'revive':'reply',answers:answers||{},message:message||''};
+    if(si.names.length)rin.images=si.names; // 只加字段：无图保持原结构
     fs.writeFileSync(path.join(s.dir,'rounds',`r${String(round).padStart(3,'0')}-in.json`),
-      JSON.stringify({type:revived?'revive':'reply',answers:answers||{},message:message||''},null,1));
+      JSON.stringify(rin,null,1));
     s.meta.round=round;s.meta.state='open';
     if(revived)log(s.dir,{ev:'revive',round});
     writeMeta(s.dir,s.meta);
@@ -302,9 +365,10 @@ const srv=http.createServer(async(req,res)=>{
         body:JSON.stringify({analysisDir:s.dir,mode,repo,projectId})});
       const j=await r.json().catch(()=>({}));
       if(r.ok&&j.runId){ // dispatch 建 run 成功（fix 或 iterate）：追加 spawnedRuns[] 历史（无则建；spawnedRun 首值保留不覆盖；build 模式仍由工厂回写，不改）
-        if(!Array.isArray(s.meta.spawnedRuns))s.meta.spawnedRuns=[];
-        s.meta.spawnedRuns.push(j.runId);
-        writeMeta(s.dir,s.meta);log(s.dir,{ev:'dispatch',mode,runId:j.runId,repo:repo||'',projectId:projectId||''});
+        const fresh=readMeta(p.id),mm=fresh?fresh.meta:s.meta; // 重读防竞态：工厂 from-plan 已回写 spawnedRun，用请求初读的陈旧 meta 覆盖会抹掉它（残留可再立 build run）
+        if(!Array.isArray(mm.spawnedRuns))mm.spawnedRuns=[];
+        if(!mm.spawnedRuns.includes(j.runId))mm.spawnedRuns.push(j.runId);
+        writeMeta(s.dir,mm);log(s.dir,{ev:'dispatch',mode,runId:j.runId,repo:repo||'',projectId:projectId||''});
       }
       return json(res,r.status,j);
     }catch(e){return json(res,502,{error:'工厂不可达: '+(e.message||'')})}

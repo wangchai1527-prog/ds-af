@@ -137,6 +137,17 @@ body.modal-open .modal{display:block}
 #matfn{width:160px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
 #matct{flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px}
 .mats{font-size:11px;color:var(--muted)}
+/* v1.4 图片附加：待发图预览条（64px 缩略 + ✕ 移除 + 文件名/大小标注） */
+.iprev{display:flex;gap:6px;flex-wrap:wrap}
+.iprev:empty{display:none}
+.ip{position:relative;width:64px;height:64px;border:1px solid var(--border);border-radius:8px;overflow:hidden;flex:none}
+.ip img{width:100%;height:100%;object-fit:cover;display:block}
+.ip .x{position:absolute;top:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:10px;line-height:1;padding:3px 5px;cursor:pointer;border-radius:0 0 0 6px}
+.ip .nm{position:absolute;left:0;right:0;bottom:0;background:rgba(0,0,0,.55);color:#fff;font-size:9px;line-height:1.3;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imgbtn{font-size:12px;padding:5px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.imgbtn:hover{border-color:var(--primary)}
+/* v1.4 对话流图片回显：缩略图（点击新窗口开原图，不做内置灯箱） */
+.msg .body img.imgecho{max-width:220px;max-height:160px;object-fit:cover;border-radius:8px;cursor:zoom-in;margin-top:6px;display:block}
 #events{max-height:110px;overflow-y:auto;font-family:var(--mono);font-size:10.5px;color:#9a9a9a;padding:4px 8px;background:#fafaf9;border-radius:6px;display:none}
 footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20px;font-size:11.5px;color:var(--muted);flex-shrink:0}
 /* 桌面：左侧栏折叠 */
@@ -198,7 +209,8 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
         <div id="matrow">
           <input id="matfn" placeholder="材料文件名.md"><input id="matct" placeholder="粘贴材料内容（可选，随 reply 入 materials/）">
         </div>
-        <div class="row"><button id="matToggle" onclick="document.body.classList.toggle('mat-open')">📎 材料</button><button id="send">📨 提交 reply（触发下一轮）</button><span class="mats" id="matlist"></span><span class="mats" id="hint"></span></div>
+        <div class="iprev" id="imgprev"></div>
+        <div class="row"><button id="matToggle" onclick="document.body.classList.toggle('mat-open')">📎 材料</button><button type="button" id="imgBtn" class="imgbtn" title="选择图片（png/jpg/gif/webp），也可在输入框 Ctrl/Cmd+V 粘贴">🖼 图片</button><input type="file" id="imgFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><button id="send">📨 提交 reply（触发下一轮）</button><span class="mats" id="matlist"></span><span class="mats" id="hint"></span><span class="mats" id="imghint">🖼 单张≤5MB·单次≤4张·每会话≤40张</span></div>
       </div>
       <div id="events"></div>
     </div>
@@ -215,6 +227,8 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
   <div id="mIdeaRow">
     <div class="lbl">② 想法（≥5 字，创建后自动跑第 1 轮，并与近 10 条历史分析比对防重复立项）</div>
     <textarea id="mIdea" style="width:100%;height:56px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font:inherit;resize:vertical"></textarea>
+    <div class="row" style="margin-top:6px"><button type="button" id="mImgBtn" class="imgbtn" title="选择图片（png/jpg/gif/webp），也可在想法框 Ctrl/Cmd+V 粘贴">🖼 附加图片</button><input type="file" id="mImgFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden><span class="mats">🖼 单张≤5MB·单次≤4张·每会话≤40张</span></div>
+    <div class="iprev" id="mImgprev"></div>
   </div>
   <div class="err" id="mErr"></div>
   <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">
@@ -255,6 +269,7 @@ window.openModal=(mode,id,preset)=>{ // preset=组头「新建会话（绑此目
   $('mIdeaRow').style.display=mode==='new'?'block':'none';
   $('mOk').textContent=mode==='new'?'创建':'归位';
   $('mErr').style.display='none';
+  clearImgs(pendMImgs,$('mImgprev')); // v1.4：打开弹层清残留待发图
   $('selPath').textContent=preset?DIRROOT+preset:'未选择';$('selPath').classList.toggle('on',!!preset);
   document.body.classList.add('modal-open');
   renderTree();
@@ -315,10 +330,11 @@ $('mOk').onclick=async()=>{
   if(mMode==='new'){
     const idea=$('mIdea').value.trim();
     if(idea.length<5)return fail('想法太短（≥5 字）');
+    const imgs=await imgsPayload(pendMImgs); // v1.4：弹层待发图随创建一并提交（第 1 轮即带图）
     const r=await(await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({idea,topic:selDir})})).json().catch(()=>({}));
+      body:JSON.stringify(imgs.length?{idea,topic:selDir,images:imgs}:{idea,topic:selDir})})).json().catch(()=>({}));
     if(!r.id)return fail('创建失败：'+(r.error||'未知错误'));
-    $('mIdea').value='';closeModal();cur=r.id;pick={};
+    $('mIdea').value='';clearImgs(pendMImgs,$('mImgprev'));closeModal();cur=r.id;pick={};
     if(mqNarrow.matches)document.body.classList.remove('side-open');
     loadList();loadDetail();return;
   }
@@ -378,12 +394,14 @@ function renderChat(d){
     const ev=evByRound[round];
     if(ev&&ev.ev==='created')h+=sysLine('🌱 会话创建 · 第 1 轮起跑');
     if(inn){
-      let body='';
+      let body='';let imgs=[];
       try{const j=JSON.parse(inn);
+        imgs=Array.isArray(j.images)?j.images:[]; // v1.4：图片引用（旧轮次无字段=无图，零改动）
         body=(j.type==='idea'||j.type==='continue')?(j.text||''):
           (j.answers&&Object.keys(j.answers).length?('拍板：'+Object.entries(j.answers).map(([k,v])=>k+'='+v).join(' · ')+(j.message?'\n'+j.message:'')):(j.message||''));
       }catch(e){body=inn}
-      if(body.trim())h+=`<div class="msg me"><div class="av">🧑</div><div class="body">第 ${round} 轮 · 我\n${esc(body).slice(0,2000)}</div></div>`;
+      const ih=imgs.map(f=>`<img class="imgecho" src="/api/analyses/${d.meta.id}/materials/${encodeURIComponent(f)}" alt="${esc(f)}" title="点击新窗口开原图" onclick="window.open(this.src)" onerror="this.outerHTML='[图片 ${esc(f)} 加载失败]'">`).join('');
+      if(body.trim()||ih)h+=`<div class="msg me"><div class="av">🧑</div><div class="body">第 ${round} 轮 · 我\n${body.trim()?esc(body).slice(0,2000)+'\n':''}${ih}</div></div>`;
     }
     if(ev&&ev.ev!=='created'&&sysEv[ev.ev])h+=sysLine(sysEv[ev.ev]+(ev.decision?(' → '+ev.decision+(ev.note?' · '+ev.note:'')):'')+(ev.runId?(' run-'+String(ev.runId).replace(/^run-/,'')):'')+(ev.ev==='assign'&&ev.topic?(' → '+ev.topic):''));
     if(out)h+=`<div class="msg"><div class="av">🧠</div><div class="body">分析 Agent · 第 ${round} 轮\n${mdHtml(out).slice(0,6000)}</div></div>`;
@@ -444,8 +462,9 @@ async function loadDetail(){
 /* 话题管理动作栏（全话题统一按钮组，不随状态换脸；唯一差异 = 已立项话题前置 🏭徽章+📜run 历史）：
    🚀提交开发 · 🔧提交升级整改 · 🅿️搁置 · ❌否决 · 🗑删除话题
    v1.3 提交流默认化：🚀/🔧 不再弹问题式确认框，点击直提 + 三态徽章（⏳/🟢/🔴可重试带原因）+ toast 撤销窗（入池阶段可用） */
-let subBadge=null; // 当前会话最近一次提交的三态徽章（busy/ok/err），切会话即清
+let subBadge=null; // 当前会话最近一次提交的三态徽章（busy/ok/err/pick），切会话即清
 function setSub(st,info,retry){subBadge={st,info,retry};loadDetail()}
+function setPick(picks){subBadge={st:'pick',info:'🔧 目标目录关联 '+picks.length+' 个项目，选整改对象：',picks};loadDetail()} // 多命中 → 候选钮由人定（不猜）
 window.subRetry=null;
 let toastTimer=null;
 function toast(msg,onUndo,ms=3000){ // ~3s 撤销窗：入池阶段（未 spawn）可撤销，dispatch 后不可（不弹此窗）
@@ -460,9 +479,11 @@ function renderMgmt(d){
   if(!cur){$('mgmt').innerHTML='';return}
   const sp=d.meta.spawnedRun,runs=Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[];
   let h='';
-  if(subBadge){ // 提交三态徽章：⏳处理中 / 🟢成功（已入池·已派发 run-N）/ 🔴失败（可重试+一句原因）
-    h+=`<span class="subb ${subBadge.st==='ok'?'ok':subBadge.st==='err'?'err':''}">${subBadge.info}`;
+  if(subBadge){ // 提交徽章：⏳处理中 / 🟢成功（已入池·已派发 run-N）/ 🔴失败（可重试+一句原因）/ 🔧候选（多项目命中，人选定）
+    h+=`<span class="subb ${subBadge.st==='ok'?'ok':(subBadge.st==='err'||subBadge.st==='pick')?'err':''}">${subBadge.info}`;
     if(subBadge.st==='err'&&subBadge.retry){window.subRetry=subBadge.retry;h+=`<button class="mb" onclick="subRetry()">重试</button>`}
+    if(subBadge.st==='pick'){window.subPickGo=dispatchFix;
+      h+=subBadge.picks.map(p=>`<button class="mb" onclick="subPickGo('${p.id}')" title="${esc(p.repo||'')}">${p.id} ${esc(String(p.name||'').replace(/\s+/g,' ').slice(0,16))}</button>`).join('')}
     h+='</span>';
   }
   if(sp)h+=`<button class="mb" disabled title="spawnedRun 已回写，到 Engineering Factory 管理">🏭 已立项 ${sp}</button>`;
@@ -484,8 +505,16 @@ window.delTopic=async id=>{
   loadList();
 };
 /* 提交升级整改（v1.3 语义固化默认，点击直提，不再 confirm/prompt 问对象）：
-   话题有 run 历史 → 按工厂项目索引自动定位关联项目，直派升级迭代（iterate）；
-   无 run 历史 → 红🔴徽章带原因（先 🚀 提交开发、工厂立项后再整改），可重试 */
+   定位链两级：① 话题有 run 历史 → 按工厂项目索引 runs 反查；② 无 run 历史 → 按 meta.topic 目标目录
+   反查（项目 repo/deployTo 等于或位于该目录之下即关联）——命中多个弹候选钮由人选定，零命中才红🔴拦 */
+window.dispatchFix=async pid=>{ // 定位完成后派发升级迭代（pid 由反查唯一命中或人从候选钮选定）
+  setSub('busy','⏳ 已定位项目 '+pid+'，派发升级迭代…');
+  const r=await(await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:cur,mode:'iterate',projectId:pid})})).json().catch(()=>({}));
+  if(r.runId)setSub('ok','🟢 已派发 '+r.runId+'（到 Engineering Factory 看进度）'); // dispatch 后不可撤销（无 toast 撤销窗）
+  else setSub('err','🔴 派发失败：'+(r.error||'未知错误'),submitFix);
+  loadDetail();loadList();
+};
 window.submitFix=async()=>{
   if(!cur)return;
   const ok=await decide('go','fix');if(!ok)return;
@@ -494,14 +523,16 @@ window.submitFix=async()=>{
   const runIds=[...(d&&Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[]),
                 ...((d&&d.meta.spawnedRun)?[d.meta.spawnedRun]:[])];
   let projs=[];try{projs=(await(await fetch('/api/factory/projects')).json().catch(()=>({}))).projects||[]}catch(e){}
-  const mine=projs.find(p=>(p.runs||[]).some(r=>runIds.includes(r)));
-  if(!mine)return setSub('err','🔴 整改失败：本话题无关联工厂项目（先 🚀 提交开发、工厂立项 run 后再整改）',submitFix);
-  setSub('busy','⏳ 已定位项目 '+mine.id+'，派发升级迭代…');
-  const r=await(await fetch('/api/dispatch',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({id:cur,mode:'iterate',projectId:mine.id})})).json().catch(()=>({}));
-  if(r.runId)setSub('ok','🟢 已派发 '+r.runId+'（到 Engineering Factory 看进度）'); // dispatch 后不可撤销（无 toast 撤销窗）
-  else setSub('err','🔴 派发失败：'+(r.error||'未知错误'),submitFix);
-  loadDetail();loadList();
+  const ridOf=r=>(r&&typeof r==='object')?r.id:r; // 工厂 /api/projects 的 runs 是对象数组（{id,idea,flow,...}），须取 .id 比（旧字符串形态兼容）
+  const mine=projs.find(p=>(p.runs||[]).some(r=>runIds.includes(ridOf(r))));
+  if(mine)return dispatchFix(mine.id);
+  const norm=s=>{const v=('/'+String(s||'').trim().replace(/^\/+/,'')).replace(/\/+$/,'');return v==='/'?'':v};
+  const tp=norm(d&&d.meta.topic); // 目标目录（话题绑定 📁）：无 run 历史时的整改落位依据
+  const cand=tp?projs.filter(p=>[p.repo,p.deployTo].some(x=>{const v=norm(x);return v&&(v===tp||v.startsWith(tp+'/'))})):[];
+  if(cand.length===1)return dispatchFix(cand[0].id);
+  if(cand.length>1)return setPick(cand.slice(0,8));
+  setSub('err','🔴 整改失败：本话题无关联工厂项目（先 🚀 提交开发、工厂立项 run 后再整改，或话题绑定到项目所在目录）',submitFix);
+  loadDetail();
 };
 /* 话题改名：prompt 输入新名 → POST /rename → 刷新列表与详情（侧边栏快捷钮可改非当前会话） */
 window.renameTopic=async id=>{
@@ -518,6 +549,43 @@ document.querySelectorAll('.tb').forEach(t=>t.onclick=()=>{
   tab=t.dataset.t;document.querySelectorAll('.tb').forEach(x=>x.classList.toggle('on',x===t));loadDetail()});
 
 /* 新建入口已移入 DSH 式弹层（openModal('new')，见上方目录树块） */
+/* v1.4 图片附加（PRD F1/F2）：待发图内存暂存（File+objectURL），随 reply/新建转 base64 提交（images 字段）；
+   前端预拦截超限（>5MB/单次>4 张/非白名单）提示不发请求，限额与后端 IMG_* 常量对齐 */
+const IMG_MAX_BYTES=5*1024*1024,IMG_MAX_PER_REQ=4;
+let pendImgs=[],pendMImgs=[]; // replybar / 新建弹层 两套待发图
+const fmtKB=n=>n>=1048576?(n/1048576).toFixed(1)+'MB':Math.round(n/1024)+'KB';
+function addImgs(list,files,prevEl){
+  for(const f of files){
+    if(!/^image\/(png|jpe?g|gif|webp)$/.test(f.type)&&!/\.(png|jpe?g|gif|webp)$/i.test(f.name)){alert('仅支持 png/jpg/gif/webp 图片：'+f.name);continue}
+    if(f.size>IMG_MAX_BYTES){alert('单张图片不可超过 5MB：'+f.name+'（'+fmtKB(f.size)+'）');continue}
+    if(list.length>=IMG_MAX_PER_REQ){alert('单次最多 '+IMG_MAX_PER_REQ+' 张图片');break}
+    list.push({file:f,url:URL.createObjectURL(f)});
+  }
+  renderImgs(list,prevEl);
+}
+function renderImgs(list,el){
+  el.innerHTML=list.map((it,i)=>`<div class="ip"><img src="${it.url}" alt=""><span class="x" title="移除" onclick="rmImg('${el.id}',${i})">✕</span><span class="nm" title="${esc(it.file.name)}（${fmtKB(it.file.size)}）">${esc(it.file.name)}·${fmtKB(it.file.size)}</span></div>`).join('');
+}
+window.rmImg=(elId,i)=>{const list=elId==='imgprev'?pendImgs:pendMImgs;URL.revokeObjectURL(list[i].url);list.splice(i,1);renderImgs(list,$(elId))};
+function clearImgs(list,el){for(const it of list)URL.revokeObjectURL(it.url);list.length=0;el.innerHTML=''}
+async function imgsPayload(list){ // File→base64（dataURL 前缀，服务端剥）
+  const out=[];
+  for(const it of list){
+    const data=await new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.onerror=()=>r(null);fr.readAsDataURL(it.file)});
+    if(data)out.push({filename:it.file.name,data});
+  }
+  return out;
+}
+const wireImgs=(btnId,fileId,taId,prevId,list)=>{ // 🖼 选择 + textarea Ctrl/Cmd+V 粘贴 双入口
+  $(btnId).onclick=()=>$(fileId).click();
+  $(fileId).onchange=e=>{addImgs(list,[...e.target.files],$(prevId));e.target.value=''};
+  $(taId).addEventListener('paste',e=>{
+    const fs=[...(e.clipboardData&&e.clipboardData.items||[])].filter(i=>i.kind==='file'&&i.type.startsWith('image/')).map(i=>i.getAsFile()).filter(Boolean);
+    if(fs.length){e.preventDefault();addImgs(list,fs,$(prevId))}
+  });
+};
+wireImgs('imgBtn','imgFile','msg','imgprev',pendImgs);
+wireImgs('mImgBtn','mImgFile','mIdea','mImgprev',pendMImgs);
 /* reply */
 $('send').onclick=async()=>{
   if(!cur)return;
@@ -525,11 +593,13 @@ $('send').onclick=async()=>{
   const fn=$('matfn').value.trim(),ct=$('matct').value;
   const b={answers:pick,message:msg};
   if(fn&&ct)b.materials=[{filename:fn,content:ct}];
+  const imgs=await imgsPayload(pendImgs);if(imgs.length)b.images=imgs; // v1.4：待发图随 reply 一并提交
   const r=await fetch('/api/analyses/'+cur+'/reply',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
   if(r.status===409){alert('本轮分析进行中，稍候');return}
   if(r.status===400){const e=await r.json();alert('材料非法：'+e.error);return}
   if(r.status===422){alert('reply 需 answers 或 message');return}
   $('msg').value='';$('matfn').value='';$('matct').value='';pick={};
+  clearImgs(pendImgs,$('imgprev')); // v1.4：成功后清待发图（与 $('msg') 清空同点位；失败保留待改）
   loadDetail();loadList();
 };
 /* 拍板：go 全态可用（已立项=再次提交；归档态=复活提交）；sm=submitMode（build/fix）
