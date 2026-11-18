@@ -108,6 +108,7 @@ const srv=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&(u==='/'||u==='/plan.html')) // no-store：防浏览器缓存旧版页面（「怎么还是没更新」根因）
     return res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'})
       ,res.end(fs.readFileSync(path.join(__dirname,'plan.html')));
+  if(req.method==='GET'&&u==='/favicon.ico')return res.writeHead(204).end(); // 浏览器自动请求，免 404 噪声
   if(req.method==='GET'&&u==='/api/analyses')return json(res,200,{analyses:listAnalyses()});
   let m;
   if(req.method==='GET'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)$/))){
