@@ -7,79 +7,44 @@
   "runs": []
  },
  {
-  "id": "P-002",
-  "name": "/root/ternaryfox/这个项目是vi",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794823021330",
-  "created": "2026-11-16T10:04:19.565Z",
-  "runs": []
- },
- {
-  "id": "P-003",
-  "name": "/root/ternaryfox/这个项目是vi",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794823021330",
-  "created": "2026-11-16T10:14:30.367Z",
-  "runs": []
- },
- {
-  "id": "P-004",
-  "name": "/root/ternaryfox/这个项目是vi",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794823021330",
-  "created": "2026-11-16T10:16:17.308Z",
-  "runs": []
- },
- {
   "id": "P-005",
   "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
   "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
   "created": "2026-11-16T11:27:57.176Z",
   "runs": [
    "run-1794828477175"
-  ]
- },
- {
-  "id": "P-006",
-  "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
-  "created": "2026-11-16T11:28:58.376Z",
-  "runs": [
-   "run-1794828477175"
-  ]
- },
- {
-  "id": "P-007",
-  "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
-  "created": "2026-11-16T11:36:18.273Z",
-  "runs": [
-   "run-1794828477175"
-  ]
- },
- {
-  "id": "P-008",
-  "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
-  "created": "2026-11-16T11:38:45.320Z",
-  "runs": [
-   "run-1794828477175"
-  ]
- },
- {
-  "id": "P-009",
-  "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
-  "created": "2026-11-16T11:40:20.678Z",
-  "runs": [
-   "run-1794828477175"
-  ]
- },
- {
-  "id": "P-010",
-  "name": "正式功能扩展开发：实现工厂多 run 并发执行制",
-  "repo": "/root/.dsh/DS-AF/runs/run-1794828477175",
-  "created": "2026-11-16T12:32:56.520Z",
-  "runs": [
-   "run-1794828477175"
-  ]
+  ],
+  "deployed": {
+   "runId": "run-1794828477175",
+   "ts": 1794931517246,
+   "history": [
+    {
+     "runId": "run-1794828477175",
+     "ts": 1794931517246,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794828477175",
+     "ts": 1794931497581,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794828477175",
+     "ts": 1794931470802,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794828477175",
+     "ts": 1794931445674,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794828477175",
+     "ts": 1794931423205,
+     "action": "deploy"
+    }
+   ]
+  }
  },
  {
   "id": "P-011",
@@ -88,7 +53,18 @@
   "created": "2026-11-17T01:38:53.976Z",
   "runs": [
    "run-1794879533973-01"
-  ]
+  ],
+  "deployed": {
+   "runId": "run-1794879533973-01",
+   "ts": 1794931537100,
+   "history": [
+    {
+     "runId": "run-1794879533973-01",
+     "ts": 1794931537100,
+     "action": "deploy"
+    }
+   ]
+  }
  },
  {
   "id": "P-012",
@@ -107,38 +83,24 @@
   ]
  },
  {
-  "id": "P-014",
-  "name": "https://ternaryfox.com/z",
-  "repo": "/root/.dsh/ds-af/runs/run-1794884174671-01",
-  "created": "2026-11-17T04:23:22.988Z",
-  "runs": []
- },
- {
-  "id": "P-015",
-  "name": "https://ternaryfox.com/z",
-  "repo": "/root/.dsh/ds-af/runs/run-1794889121068-01",
-  "created": "2026-11-17T05:06:09.835Z",
-  "runs": [
-   "run-1794889121068-01"
-  ]
- },
- {
-  "id": "P-016",
-  "name": "https://ternaryfox.com/z",
-  "repo": "/root/.dsh/ds-af/runs/run-1794889121068-01",
-  "created": "2026-11-17T05:38:30.670Z",
-  "runs": [
-   "run-1794889121068-01"
-  ]
- },
- {
   "id": "P-017",
   "name": "Engineering 已立项项目 · 迭代 /",
   "repo": "/root/.dsh/ds-af/runs/run-1794917403151-01",
   "created": "2026-11-17T12:10:03.189Z",
   "runs": [
    "run-1794917403151-01"
-  ]
+  ],
+  "deployed": {
+   "runId": "run-1794917403151-01",
+   "ts": 1794931593894,
+   "history": [
+    {
+     "runId": "run-1794917403151-01",
+     "ts": 1794931593894,
+     "action": "deploy"
+    }
+   ]
+  }
  },
  {
   "id": "P-018",
@@ -147,16 +109,23 @@
   "created": "2026-11-17T12:22:18.580Z",
   "runs": [
    "run-1794918138578-02"
-  ]
- },
- {
-  "id": "P-019",
-  "name": "Engineering Factory v2.1",
-  "repo": "/root/.dsh/ds-af/runs/run-1794918138578-02",
-  "created": "2026-11-17T13:14:22.757Z",
-  "runs": [
-   "run-1794918138578-02"
-  ]
+  ],
+  "deployed": {
+   "runId": "run-1794918138578-02",
+   "ts": 1794931629276,
+   "history": [
+    {
+     "runId": "run-1794918138578-02",
+     "ts": 1794931629276,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794918138578-02",
+     "ts": 1794931622079,
+     "action": "deploy"
+    }
+   ]
+  }
  },
  {
   "id": "P-020",
@@ -165,15 +134,22 @@
   "created": "2026-11-17T13:32:41.228Z",
   "runs": [
    "run-1794922361225-01"
-  ]
- },
- {
-  "id": "P-021",
-  "name": "部署闭环集成：把 run-17949181385",
-  "repo": "/root/.dsh/ds-af/runs/run-1794922361225-01",
-  "created": "2026-11-17T15:27:13.095Z",
-  "runs": [
-   "run-1794922361225-01"
-  ]
+  ],
+  "deployed": {
+   "runId": "run-1794922361225-01",
+   "ts": 1794931636416,
+   "history": [
+    {
+     "runId": "run-1794922361225-01",
+     "ts": 1794931636416,
+     "action": "deploy"
+    },
+    {
+     "runId": "run-1794922361225-01",
+     "ts": 1794931065739,
+     "action": "deploy"
+    }
+   ]
+  }
  }
 ]

@@ -1,6 +1,7 @@
 import {test,after} from 'node:test';import assert from 'node:assert/strict';
 import {spawn} from 'child_process';import fs from 'fs';import path from 'path';import os from 'os';
 // Task 0：Idea Plan 分析台（会话/轮次协议 · 五态 · 防重入 · 复活 · materials 路径防注入）
+// v1.1：话题目录归属（analyses/<topic>/an-* · 无 topic 拒建）+ 历史话题续接（parent 注入父成果）
 const ADIR=fs.mkdtempSync(path.join(os.tmpdir(),'dsaf-plan-'));
 const MOCK=path.resolve('test/mock-plan-agent.mjs');
 fs.chmodSync(MOCK,0o755);
@@ -13,30 +14,67 @@ const api=async(m,u,b)=>{const r=await fetch('http://127.0.0.1:'+TP+u,{method:m,
 async function poll(fn,ms=12000,step=250){const t0=Date.now();while(Date.now()-t0<ms){if(await fn())return true;await new Promise(r=>setTimeout(r,step))}return false}
 let sid=null;
 
-test('/api/new 建会话并自动跑第 1 轮 → open + r001-out.md + 列表可见',async()=>{
-  const r=await api('POST','/api/new',{idea:'做一个并发流水线观测面板的预研分析'});
+test('/api/new 无 topic → 422 拒建（杜绝无归属漂移会话）',async()=>{
+  const r=await api('POST','/api/new',{idea:'没有归属目录的漂移会话'});
+  assert.equal(r.code,422);
+  const r2=await api('POST','/api/new',{idea:'想落进未分组保留桶的会话',topic:'未分组'});
+  assert.equal(r2.code,422,'「未分组」保留桶不可作新话题目录');
+});
+test('/api/new 建会话（话题目录归属）→ analyses/<topic>/an-* · meta.topic · 自动跑第 1 轮',async()=>{
+  const r=await api('POST','/api/new',{idea:'做一个并发流水线观测面板的预研分析',topic:'工厂面板'});
   assert.equal(r.code,200);sid=r.body.id;assert.ok(sid&&sid.startsWith('an-'));
-  const dir=path.join(ADIR,sid);
+  assert.equal(r.body.topic,'工厂面板');
+  const dir=path.join(ADIR,'工厂面板',sid);
+  assert.ok(fs.existsSync(dir),'会话应落在话题目录下');
   const ok=await poll(()=>fs.existsSync(path.join(dir,'rounds','r001-out.md')));
   assert.ok(ok,'r001-out.md 应由 agent 写出');
   const meta=JSON.parse(fs.readFileSync(path.join(dir,'meta.json'),'utf8'));
-  assert.equal(meta.state,'open');assert.equal(meta.round,1);
+  assert.equal(meta.state,'open');assert.equal(meta.round,1);assert.equal(meta.topic,'工厂面板');
   const list=await api('GET','/api/analyses');
-  assert.ok(list.body.analyses.some(a=>a.id===sid&&a.state==='open'));
+  const me=list.body.analyses.find(a=>a.id===sid);
+  assert.ok(me&&me.state==='open'&&me.topic==='工厂面板');
+});
+test('续接：带 parent 新建 → 同话题目录 · 父 BRIEF+轮次注入 materials/ · meta.parent · r001 type=continue',async()=>{
+  // 手工造父话题（根级未分组，模拟历史老会话）
+  const pid='an-manual-parent';const pd=path.join(ADIR,pid);
+  fs.mkdirSync(path.join(pd,'rounds'),{recursive:true});fs.mkdirSync(path.join(pd,'materials'),{recursive:true});
+  fs.writeFileSync(path.join(pd,'meta.json'),JSON.stringify({id:pid,topic:null,idea:'父话题：交付过的老功能',state:'go',round:2,spawnedRun:'run-old'}));
+  fs.writeFileSync(path.join(pd,'BRIEF.md'),'# 父 BRIEF 定稿内容');
+  fs.writeFileSync(path.join(pd,'rounds','r001-out.md'),'父第 1 轮结论');
+  fs.writeFileSync(path.join(pd,'rounds','r002-out.md'),'父第 2 轮结论');
+  const r=await api('POST','/api/new',{idea:'续接父话题做二次开发升级方向分析',parent:pid});
+  assert.equal(r.code,200);
+  const cid=r.body.id;const cd=path.join(ADIR,cid); // 父在根级 → 续接也落根级同目录
+  assert.ok(fs.existsSync(cd),'续接会话目录应存在');
+  assert.equal(fs.readFileSync(path.join(cd,'materials','parent-BRIEF.md'),'utf8'),'# 父 BRIEF 定稿内容');
+  const pr=fs.readFileSync(path.join(cd,'materials','parent-rounds.md'),'utf8');
+  assert.ok(pr.includes('r001-out.md')&&pr.includes('父第 2 轮结论'),'父轮次结论应注入');
+  const meta=JSON.parse(fs.readFileSync(path.join(cd,'meta.json'),'utf8'));
+  assert.equal(meta.parent,pid);assert.equal(meta.topic,'未分组');
+  const inn=JSON.parse(fs.readFileSync(path.join(cd,'rounds','r001-in.json'),'utf8'));
+  assert.equal(inn.type,'continue');assert.equal(inn.parent,pid);
+  await poll(()=>fs.existsSync(path.join(cd,'rounds','r001-out.md')));
+});
+test('话题目录内会话：listAnalyses 带回 topic；detail/reply/decide 跨目录寻址正常',async()=>{
+  const list=await api('GET','/api/analyses');
+  assert.ok(list.body.analyses.some(a=>a.topic==='工厂面板'),'话题目录会话应带 topic');
+  // sid 在 工厂面板/ 下，走 detail（readMeta 跨目录查找）
+  const d=await api('GET','/api/analyses/'+sid);
+  assert.equal(d.code,200);assert.equal(d.body.meta.topic,'工厂面板');
 });
 test('一轮进行中 reply → 409；materials 带 ../ filename → 400',async()=>{
-  const r=await api('POST','/api/new',{idea:'第二个会话：重入防护验证'});
+  const r=await api('POST','/api/new',{idea:'第二个会话：重入防护验证',topic:'工厂面板'});
   const id2=r.body.id;
   const early=await api('POST','/api/analyses/'+id2+'/reply',{answers:{}});
   assert.equal(early.code,409); // mock 200ms 内必在跑
-  await poll(()=>fs.existsSync(path.join(ADIR,id2,'rounds','r001-out.md')),15000); // 第 1 轮跑完再验 400
+  await poll(()=>fs.existsSync(path.join(ADIR,'工厂面板',id2,'rounds','r001-out.md')),15000); // 第 1 轮跑完再验 400
   const bad=await api('POST','/api/analyses/'+id2+'/reply',{answers:{},materials:[{filename:'../evil.txt',content:'x'}]});
   assert.equal(bad.code,400);
 });
 test('reply 续轮 → agent 收敛 → state=awaiting；decide no-go → 归档保留',async()=>{
   const r=await api('POST','/api/analyses/'+sid+'/reply',{answers:{D1:'Web',D2:'P0最小'},message:'形态定了'});
   assert.equal(r.code,200);
-  const dir=path.join(ADIR,sid);
+  const dir=path.join(ADIR,'工厂面板',sid);
   const ok=await poll(()=>JSON.parse(fs.readFileSync(path.join(dir,'meta.json'),'utf8')).state==='awaiting');
   assert.ok(ok,'第 2 轮收敛后 state 应 awaiting');
   assert.ok(fs.existsSync(path.join(dir,'rounds','r002-in.json')),'r002-in.json 应落盘');
@@ -48,7 +86,7 @@ test('reply 续轮 → agent 收敛 → state=awaiting；decide no-go → 归档
 test('复活：no-go 会话 reply → state 回 open 且 round+1',async()=>{
   const r=await api('POST','/api/analyses/'+sid+'/reply',{answers:{},message:'重新捡起来'});
   assert.equal(r.code,200);
-  const dir=path.join(ADIR,sid);
+  const dir=path.join(ADIR,'工厂面板',sid);
   const ok=await poll(()=>JSON.parse(fs.readFileSync(path.join(dir,'meta.json'),'utf8')).state==='open');
   assert.ok(ok);
   const meta=JSON.parse(fs.readFileSync(path.join(dir,'meta.json'),'utf8'));
@@ -56,16 +94,16 @@ test('复活：no-go 会话 reply → state 回 open 且 round+1',async()=>{
 });
 test('decide go → 仅提交立项池（state=go + spawnedRun=null），不直接建工厂 run',async()=>{
   // 第 3 轮（复活轮）mock 也输出收敛 → awaiting
-  const ok=await poll(()=>JSON.parse(fs.readFileSync(path.join(ADIR,sid,'meta.json'),'utf8')).state==='awaiting',15000);
+  const ok=await poll(()=>JSON.parse(fs.readFileSync(path.join(ADIR,'工厂面板',sid,'meta.json'),'utf8')).state==='awaiting',15000);
   assert.ok(ok,'复活轮应收敛 awaiting');
   const d=await api('POST','/api/analyses/'+sid+'/decide',{decision:'go'});
   assert.equal(d.code,200);
-  const meta=JSON.parse(fs.readFileSync(path.join(ADIR,sid,'meta.json'),'utf8'));
+  const meta=JSON.parse(fs.readFileSync(path.join(ADIR,'工厂面板',sid,'meta.json'),'utf8'));
   assert.equal(meta.state,'go');assert.equal(meta.spawnedRun,null,'GO 仅提交，spawnedRun 待工厂 from-plan 回写');
 });
 test('话题管理：open 态可直接否决/搁置（不必等收敛）· 硬删目录 · spawnedRun 守卫',async()=>{
-  const r=await api('POST','/api/new',{idea:'话题管理闭环验证专用会话'});
-  const id=r.body.id;const dir=path.join(ADIR,id);
+  const r=await api('POST','/api/new',{idea:'话题管理闭环验证专用会话',topic:'管理组'});
+  const id=r.body.id;const dir=path.join(ADIR,'管理组',id);
   await poll(()=>fs.existsSync(path.join(dir,'rounds','r001-out.md'))); // 第 1 轮跑完 → open
   const ng=await api('POST','/api/analyses/'+id+'/decide',{decision:'no-go'});
   assert.equal(ng.code,200,'open 态否决应放行');

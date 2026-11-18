@@ -36,6 +36,16 @@ main{flex:1;display:flex;overflow:hidden}
 .ses.sel{border-color:var(--primary);box-shadow:0 0 0 3px #f5f3ff}
 .ses .idea{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .ses .meta{font-size:11px;color:var(--muted);margin-top:3px;display:flex;gap:8px}
+/* 侧边栏分组头：可折叠（▾/▸ + 计数） */
+.tg-head{font-size:11.5px;color:var(--muted);padding:7px 4px 3px;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px}
+.tg-head:hover{color:var(--primary)}
+.tg-head .cnt{font-weight:400}
+/* 侧边栏会话卡快捷管理（悬停浮现：改名/删除） */
+.ses .qa{display:none;margin-left:auto;gap:4px}
+.ses:hover .qa{display:inline-flex}
+.ses .qa span{cursor:pointer;padding:0 3px;border-radius:4px;font-size:11px}
+.ses .qa span:hover{background:#f5f3ff;color:var(--primary)}
+.ses .qa span.del:hover{background:#fee2e2;color:var(--err)}
 .stt{font-size:10.5px;padding:1px 8px;border-radius:999px;border:1px solid}
 .stt.open{color:var(--primary);border-color:var(--primary)}
 .stt.awaiting{color:var(--warn);border-color:var(--warn)}
@@ -66,8 +76,6 @@ main{flex:1;display:flex;overflow:hidden}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 #send{padding:7px 20px;border-radius:8px;border:0;background:var(--primary);color:#fff;font-weight:600;cursor:pointer}
 #send:disabled{opacity:.5}
-.gate{display:none;gap:8px}
-.gate .b{padding:8px 18px;border-radius:8px;font-weight:700;cursor:pointer;border:1px solid}
 .b.go{background:#dcfce7;color:var(--ok);border-color:var(--ok)}
 .b.fix{background:#ffedd5;color:var(--warn);border-color:var(--warn)}
 .b.no{background:#fee2e2;color:var(--err);border-color:var(--err)}
@@ -114,6 +122,10 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
   <div id="mask" onclick="toggleSide(true)"></div>
   <div id="side">
     <div id="newbar">
+      <div class="row" style="gap:6px">
+        <select id="topicSel" title="话题目录（会话归属，杜绝漂移）" style="flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:8px;font:inherit;font-size:12.5px;background:#fff"></select>
+        <input id="topicNew" placeholder="新话题目录名（≤40字）" style="display:none;flex:1;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px">
+      </div>
       <textarea id="idea" placeholder="想法，例：给工厂做个并发流水线观测面板的预研分析…（会自动跑第 1 轮，并与近 10 条历史分析比对防重复立项）"></textarea>
       <button id="newbtn">🌱 新建分析会话</button>
     </div>
@@ -122,7 +134,7 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
   </div>
   <div id="work">
     <div id="top"><span class="idea" id="tidea">选择或新建一个分析会话</span><span id="tstate"></span><button class="mb" id="rnb" style="display:none" onclick="renameTopic()" title="修改话题名（1–80 字）">✏️ 改名</button></div>
-    <div id="mgmt"></div><!-- 话题管理动作栏：全态出 🚀提交开发 / 🔧提交升级整改（go/spawnedRun 带「再次」）· go未立项可撤回 · open可搁置/否决 · 未立项可删除 -->
+    <div id="mgmt"></div><!-- 话题管理动作栏：全话题统一按钮组（提交开发/整改·搁置·否决·删除），已立项前置 🏭徽章 -->
     <div id="tabs">
       <div class="tb on" data-t="round">📋 本轮决策点</div>
       <div class="tb" data-t="IDEA">💡 IDEA</div>
@@ -132,14 +144,6 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
     </div>
     <div id="pane"><div style="color:var(--muted);font-size:13px">等待会话…</div></div>
     <div id="replybar">
-      <div class="gate row" id="gate">
-        <b style="font-size:13px">已收敛 · 拍板：</b>
-        <button class="b go" onclick="decide('go','build','awaiting')">🚀 提交开发</button>
-        <button class="b fix" onclick="submitFix('awaiting')">🔧 提交升级整改</button>
-        <button class="b no" onclick="decide('no-go')">❌ NO-GO · 归档</button>
-        <button class="b pk" onclick="decide('park')">🅿️ PARK · 搁置</button>
-        <span class="mats" id="spawninfo"></span>
-      </div>
       <div class="row" id="replyrow">
         <textarea id="msg" placeholder="拍板补充 / 追问 / 喂料后的说明（点选上方决策点选项后连同提交）"></textarea>
         <div id="matrow">
@@ -151,7 +155,7 @@ footer{background:var(--card);border-top:1px solid var(--border);padding:4px 20p
     </div>
   </div>
 </main>
-<footer>五态：open 分析中 · awaiting 待拍板 · go 已提交（🟢开发 / 🟠整改）· no-go/park 归档（reply 复活续轮，或直接再提交）｜话题管理：全态可 🚀提交开发 / 🔧提交升级整改（go 态带「再次」）· go 未立项可 ↩️撤回 · open 可 🅿️搁置 / ❌否决 · ✏️改名 · 🗑删除（硬删，未立项时）· 工厂选走或 dispatch 后回写 spawnedRun</footer>
+<footer>动作栏全话题统一：🚀提交开发 · 🔧提交升级整改 · 🅿️搁置 · ❌否决 · 🗑删除话题（已立项话题另前置 🏭徽章）｜继续对话 = reply 续轮，目的就是再次提交：已立项后 🔧整改直建新 run 并累积 📜run 历史｜话题目录：会话挂 analyses/&lt;话题&gt;/ 下，侧边栏分组可折叠（悬停会话卡出 ✏️改名/🗑删除）</footer>
 <script>
 const $=id=>document.getElementById(id);
 const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -171,14 +175,41 @@ const FLOWS=[['all','全部'],['open','分析中'],['awaiting','待拍板'],['go
 
 function renderFilters(){$('filters').innerHTML=FLOWS.map(([k,l])=>`<span class="fbtn ${filter===k?'on':''}" onclick="setF('${k}')">${l}</span>`).join('')}
 window.setF=k=>{filter=k;renderFilters();loadList()};
+/* 话题目录选择器：已有话题下拉 + 「＋新建话题…」切输入框（新建会话必带归属，杜绝漂移） */
+const NEW_T='__new__';
+let lastTopics=[];
+function renderTopics(){
+  const sel=$('topicSel'),inp=$('topicNew');
+  const prevNew=inp.style.display!=='none',prev=prevNew?null:sel.value;
+  const opts=lastTopics.filter(t=>t!=='未分组'); // 「未分组」= 历史老会话保留桶，不可作为新归属选
+  sel.innerHTML=opts.map(t=>`<option value="${esc(t)}">📁 ${esc(t)}</option>`).join('')
+    +`<option value="${NEW_T}">＋ 新建话题…</option>`;
+  sel.onchange=()=>{const isNew=sel.value===NEW_T;inp.style.display=isNew?'block':'none';if(isNew)inp.focus()};
+  if(prevNew){sel.value=NEW_T;inp.style.display='block'}
+  else if(prev&&opts.includes(prev))sel.value=prev;
+  if(!opts.length){sel.value=NEW_T;inp.style.display='block';inp.placeholder='首个话题目录名（会话归属）'}
+}
+const curTopic=()=>{const s=$('topicSel'),i=$('topicNew');
+  return s.value===NEW_T?(i.value.trim()||''):s.value};
 async function loadList(){
   const d=await(await fetch('/api/analyses')).json().catch(()=>({analyses:[]}));
-  const arr=(d.analyses||[]).filter(a=>filter==='all'||a.state===filter);
-  $('list').innerHTML=arr.length?arr.map(a=>`
+  const all=d.analyses||[];
+  const topics=[...new Set(all.map(a=>a.topic||'未分组'))];
+  if(topics.join('|')!==lastTopics.join('|')){lastTopics=topics;renderTopics()}
+  const arr=all.filter(a=>filter==='all'||a.state===filter);
+  /* 按话题目录分组渲染：新建与历史会话同栏管理；分组头可折叠（记忆）· 会话卡悬停出快捷管理 */
+  const groups={};for(const a of arr)(groups[a.topic||'未分组']=groups[a.topic||'未分组']||[]).push(a);
+  const keys=Object.keys(groups).sort((x,y)=>(x==='未分组')-(y==='未分组')||x.localeCompare(y));
+  let collapsed={};try{collapsed=JSON.parse(localStorage.getItem('plan-tg-collapsed')||'{}')}catch(e){}
+  window.tgToggle=t=>{collapsed[t]=!collapsed[t];try{localStorage.setItem('plan-tg-collapsed',JSON.stringify(collapsed))}catch(e){};loadList()};
+  $('list').innerHTML=arr.length?keys.map(t=>`
+    <div class="tg-head" onclick="tgToggle(${JSON.stringify(t)})">${collapsed[t]?'▸':'▾'} 📁 ${esc(t)}<span class="cnt">（${groups[t].length}）</span></div>`+
+    (collapsed[t]?'':groups[t].map(a=>`
     <div class="ses ${cur===a.id?'sel':''}" onclick="selSes('${a.id}')">
-      <div class="idea">${esc(a.idea)}</div>
-      <div class="meta">${stSpan(a.state,a.submitMode,a.spawnedRuns)}<span>第 ${a.round} 轮</span><span>${(a.updated||'').slice(5,16).replace('T',' ')}</span></div>
-    </div>`).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
+      <div class="idea">${a.parent?'<span title="续接会话" style="color:var(--primary)">🔁 </span>':''}${esc(a.idea)}</div>
+      <div class="meta">${stSpan(a.state,a.submitMode,a.spawnedRuns)}<span>第 ${a.round} 轮</span><span>${(a.updated||'').slice(5,16).replace('T',' ')}</span>
+        <span class="qa"><span title="改名" onclick="event.stopPropagation();renameTopic('${a.id}')">✏️</span><span class="del" title="删除（未立项时可用）" onclick="event.stopPropagation();delTopic('${a.id}')">🗑</span></span></div>
+    </div>`).join(''))).join(''):'<div style="font-size:12px;color:var(--muted);padding:6px">（无会话）</div>';
 }
 window.selSes=id=>{cur=id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()};
 
@@ -222,7 +253,9 @@ async function loadDetail(){
   if(!d||d.error){$('pane').innerHTML='<div style="color:var(--err)">加载失败</div>';return}
   curIdea=d.meta.idea||'';
   $('tidea').textContent=curIdea.slice(0,60);
-  $('tstate').innerHTML=`${stSpan(d.meta.state,d.meta.submitMode,(d.meta.spawnedRuns||[]).length)} · 第 ${d.meta.round} 轮`;
+  const tp=d.meta.topic?` · 📁 ${d.meta.topic}`:'';
+  const pt=d.meta.parent?` · <span title="续接自父话题" style="cursor:pointer" onclick="selSes('${d.meta.parent}')">🔁 续接自 ${d.meta.parent}</span>`:'';
+  $('tstate').innerHTML=`${stSpan(d.meta.state,d.meta.submitMode,(d.meta.spawnedRuns||[]).length)} · 第 ${d.meta.round} 轮${tp}${pt}`;
   $('rnb').style.display='';
   if(tab==='round')$('pane').innerHTML=renderRound(d);
   else if(tab==='rounds'){
@@ -232,35 +265,34 @@ async function loadDetail(){
     const c=d.docs[tab];
     $('pane').innerHTML=`<div class="doc">${mdHtml(c)||'（'+tab+'.md 尚未生成）'}</div>`;
   }
-  $('gate').style.display=d.meta.state==='awaiting'?'flex':'none';
-  $('spawninfo').textContent=d.meta.spawnedRun?('工厂已立项 run：'+d.meta.spawnedRun):(d.meta.state==='go'?'待 Engineering Factory 选话题立项':'');
   $('matlist').textContent=(d.materials||[]).length?('📎 materials/: '+(d.materials||[]).join(', ')):'';
-  $('hint').textContent=d.running?'本轮分析中（reply 会 409）':(['no-go','park'].includes(d.meta.state)?'归档会话：reply 即复活续轮':'');
+  $('hint').textContent=d.running?'本轮分析中（reply 会 409）':(d.meta.state==='awaiting'?'已收敛 — 在上方动作栏拍板提交':(['no-go','park'].includes(d.meta.state)?'归档会话：reply 即复活续轮':''));
   renderMgmt(d);
 }
-/* 话题管理动作栏：全态出「提交开发 / 提交升级整改」（提交按钮永不消失；go/spawnedRun 带「再次」），
-   no-go/park 提交即复活（confirm 复活提示，直接提交不续轮）；已 spawnedRun 显示 run 历史 */
+/* 话题管理动作栏（全话题统一按钮组，不随状态换脸；唯一差异 = 已立项话题前置 🏭徽章+📜run 历史）：
+   🚀提交开发 · 🔧提交升级整改 · 🅿️搁置 · ❌否决 · 🗑删除话题
+   继续对话 = reply 续轮，目的就是再次提交：已立项后 🔧整改直建新 run 并累积 spawnedRuns */
 function renderMgmt(d){
   if(!cur){$('mgmt').innerHTML='';return}
   const st=d.meta.state,sp=d.meta.spawnedRun,runs=Array.isArray(d.meta.spawnedRuns)?d.meta.spawnedRuns:[];
-  const again=(st==='go'||sp)?'（再次）':'';
   let h='';
   if(sp)h+=`<button class="mb" disabled title="spawnedRun 已回写，到 Engineering Factory 管理">🏭 已立项 ${sp}</button>`;
   if(runs.length)h+=`<span class="mats" title="spawnedRuns：${esc(runs.join('，'))}">📜 run 历史 ×${runs.length}</span>`;
-  h+=`<button class="mb" style="border-color:var(--primary);color:var(--primary);font-weight:600"${st==='open'?' title="open 态提交 = 跳过收敛强制提交"':''} onclick="decide('go','build','${st}')">🚀 ${again}提交开发</button>`
-    +`<button class="mb" onclick="submitFix('${st}')">🔧 ${again}提交升级整改</button>`;
-  if(st==='go'&&!sp)h+=`<button class="mb" onclick="decide('withdraw')">↩️ 撤回拍板</button>`;
-  if(st==='open')h+=`<button class="mb" onclick="decide('park')">🅿️ 搁置</button><button class="mb" onclick="decide('no-go')">❌ 否决</button>`;
-  if(!sp)h+=`<button class="mb danger" onclick="delTopic()">🗑 删除话题</button>`;
+  h+=`<button class="mb" style="border-color:var(--primary);color:var(--primary);font-weight:600" onclick="decide('go','build','${st}')">🚀 提交开发</button>`
+    +`<button class="mb" onclick="submitFix('${st}')">🔧 提交升级整改</button>`
+    +`<button class="mb" onclick="decide('park')">🅿️ 搁置</button>`
+    +`<button class="mb" onclick="decide('no-go')">❌ 否决</button>`
+    +`<button class="mb danger" onclick="delTopic()">🗑 删除话题</button>`;
   $('mgmt').innerHTML=h;
 }
-window.delTopic=async()=>{
-  if(!cur)return;
-  if(!confirm('硬删除话题 '+cur+'（磁盘目录连同轮次/活文档一并删除，不可恢复）？'))return;
-  const r=await(await fetch('/api/analyses/'+cur+'/delete',{method:'POST'})).json().catch(()=>({}));
+window.delTopic=async id=>{
+  const t=id||cur;if(!t)return;
+  if(!confirm('硬删除话题 '+t+'（磁盘目录连同轮次/活文档一并删除，不可恢复）？'))return;
+  const r=await(await fetch('/api/analyses/'+t+'/delete',{method:'POST'})).json().catch(()=>({}));
   if(!r.ok)return alert('删除失败：'+(r.error||'未知错误'));
-  cur=null;pick={};curIdea='';$('pane').innerHTML='<div style="color:var(--muted);font-size:13px">等待会话…</div>';
-  $('tidea').textContent='选择或新建一个分析会话';$('tstate').innerHTML='';$('rnb').style.display='none';renderMgmt(null);loadList();
+  if(t===cur){cur=null;pick={};curIdea='';$('pane').innerHTML='<div style="color:var(--muted);font-size:13px">等待会话…</div>';
+    $('tidea').textContent='选择或新建一个分析会话';$('tstate').innerHTML='';$('rnb').style.display='none';renderMgmt(null)}
+  loadList();
 };
 window.dispatchFix=async()=>{
   if(!cur)return;
@@ -273,27 +305,30 @@ window.dispatchFix=async()=>{
 };
 /* 提交升级整改 = 先 decide('go',fix) 再走 dispatchFix 的仓库 prompt + /api/dispatch mode=fix */
 window.submitFix=st=>{if(cur)decide('go','fix',st).then(ok=>{if(ok)dispatchFix()})};
-/* 话题改名：prompt 输入新名 → POST /rename → 刷新列表与详情 */
-window.renameTopic=async()=>{
-  if(!cur)return;
-  const t=prompt('修改话题名（1–80 字）：',curIdea);
-  if(t===null)return;
-  const title=t.trim();
+/* 话题改名：prompt 输入新名 → POST /rename → 刷新列表与详情（侧边栏快捷钮可改非当前会话） */
+window.renameTopic=async id=>{
+  const t=id||cur;if(!t)return;
+  const name=prompt('修改话题名（1–80 字）：',(t===cur?curIdea:''));
+  if(name===null)return;
+  const title=name.trim();
   if(!title)return alert('话题名不能为空');
-  const r=await(await fetch('/api/analyses/'+cur+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})})).json().catch(()=>({}));
+  const r=await(await fetch('/api/analyses/'+t+'/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})})).json().catch(()=>({}));
   if(!r.ok)return alert('改名失败：'+(r.error||'未知错误'));
-  loadDetail();loadList();
+  if(t===cur)loadDetail();loadList();
 };
 document.querySelectorAll('.tb').forEach(t=>t.onclick=()=>{
   tab=t.dataset.t;document.querySelectorAll('.tb').forEach(x=>x.classList.toggle('on',x===t));loadDetail()});
 
-/* 新建 */
+/* 新建（必带话题目录归属；下拉选已有或输入新建） */
 $('newbtn').onclick=async()=>{
   const idea=$('idea').value.trim();if(idea.length<5){alert('想法太短（≥5 字）');return}
+  const topic=curTopic();
+  if(!topic){alert('请先选择或新建话题目录（会话归属）');return}
   $('newbtn').disabled=true;
-  const r=await(await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea})})).json().catch(()=>({}));
+  const r=await(await fetch('/api/new',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({idea,topic})})).json().catch(()=>({}));
   $('newbtn').disabled=false;
-  if(r.id){$('idea').value='';cur=r.id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()}
+  if(r.id){$('idea').value='';$('topicNew').value='';cur=r.id;pick={};if(mqNarrow.matches)document.body.classList.remove('side-open');loadList();loadDetail()}
+  else alert('新建失败：'+(r.error||'未知错误'));
 };
 /* reply */
 $('send').onclick=async()=>{
@@ -309,8 +344,12 @@ $('send').onclick=async()=>{
   $('msg').value='';$('matfn').value='';$('matct').value='';pick={};
   loadDetail();loadList();
 };
-/* 拍板：go 全态可用（归档态=复活提交，confirm 复活提示）；sm=submitMode（build/fix），st=提交时状态（用于确认文案） */
-const goMsg=(st,sm)=>(['no-go','park'].includes(st)?`确认复活并提交：话题当前为「${st==='no-go'?'NO-GO 否决':'PARK 搁置'}」归档态，直接提交（不续轮，轮次不变）`:'确认 GO：话题进入立项池（open 态 = 跳过收敛强制提交；工厂选走或 dispatch 时才建 run）')+(sm==='fix'?'，本次走升级整改：拍板后选目标仓库建修复 run':'，本次走开发：待工厂「选话题立项」')+'？';
+/* 拍板：go 全态可用（已立项=再次提交；归档态=复活提交）；sm=submitMode（build/fix），st=提交时状态（用于确认文案） */
+const goMsg=(st,sm)=>{
+  const base=st==='go'?'该话题已提交过 — 再次提交（先 reply 续轮更新结论更稳）'
+    :(['no-go','park'].includes(st)?`确认复活并提交：话题当前为「${st==='no-go'?'NO-GO 否决':'PARK 搁置'}」归档态，直接提交（不续轮，轮次不变）`
+    :'确认 GO：话题进入立项池（open 态 = 跳过收敛强制提交；工厂选走或 dispatch 时才建 run）');
+  return base+(sm==='fix'?'，本次走升级整改：拍板后选目标仓库建修复 run 并累积 run 历史':'，本次走开发：待工厂「选话题立项」')+'？'};
 window.decide=async(d,sm,st)=>{
   if(!confirm(d==='go'?goMsg(st,sm):d==='withdraw'?'确认撤回：话题回到「待拍板」（工厂尚未选走才允许）？':'确认 '+d.toUpperCase()+'：会话归档（产物保留，可复活）？'))return false;
   const r=await(await fetch('/api/analyses/'+cur+'/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:d,submitMode:sm||'build'})})).json();

@@ -40,7 +40,8 @@ function saveProjects(p){ // F11（T4/T6）：tmp+rename 原子写，断电/崩�
   fs.writeFileSync(tmp,JSON.stringify(p,null,1));
   fs.renameSync(tmp,PROJFILE);
 }
-function newProject(name,repo){return projMutate(p=>{const proj={id:'P-'+String(p.length+1).padStart(3,'0'),name,repo,created:new Date().toISOString(),runs:[]};p.push(proj);return proj})}
+// v2.2.1：id 取现存最大号+1 单调递增（归并删除旧项后不复用已见编号，保唯一）
+function newProject(name,repo){return projMutate(p=>{const n=p.reduce((m,x)=>Math.max(m,parseInt(String(x.id).slice(2))||0),0)+1;const proj={id:'P-'+String(n).padStart(3,'0'),name,repo,created:new Date().toISOString(),runs:[]};p.push(proj);return proj})}
 function attachRun(projId,runId,name,repo){return projMutate(p=>{let pr=p.find(x=>x.id===projId);
   if(!pr){pr={id:projId,name:name||runId,repo:repo||null,created:new Date().toISOString(),runs:[]};p.push(pr)}
   if(!pr.runs.includes(runId))pr.runs.push(runId)})}
@@ -54,6 +55,29 @@ function recordDeploy(projId,runId,action){
     return pr.deployed});
 }
 function findProjectByRun(runId){try{return((loadProjects().find(p=>(p.runs||[]).includes(runId))||{}).id)||null}catch(e){return null}}
+// v2.2.1 归类自愈（规范程序，非人工/AI 手工清洗）：同 name+repo 的项目自动归并 ——
+// 保留最早项，created 取最早、runs 有序去重并、remote 取首个非空、deployed 取 ts 最新且 history 并集降序裁 20；
+// 启动时自动触发（listen 回调），配合 restore/立项查重（防再犯）构成自动归类闭环。
+function normalizeProjects(){return projMutate(p=>{
+  const byKey=new Map(),merged=[];
+  for(const pr of p){
+    const keep=byKey.get(pr.name+'\u0000'+(pr.repo||''));
+    if(!keep){byKey.set(pr.name+'\u0000'+(pr.repo||''),pr);merged.push(pr);continue}
+    keep.created=[keep.created,pr.created].filter(Boolean).sort()[0]||keep.created;
+    for(const r of(pr.runs||[]))if(!keep.runs.includes(r))keep.runs.push(r);
+    if(!keep.remote&&pr.remote)keep.remote=pr.remote;
+    if(pr.deployed){
+      const hist=new Map();
+      for(const h of[...((keep.deployed&&keep.deployed.history)||[]),...(pr.deployed.history||[])])hist.set(h.runId+'\u0000'+h.ts+'\u0000'+h.action,h);
+      const newer=(!keep.deployed||pr.deployed.ts>=keep.deployed.ts)?pr.deployed:keep.deployed;
+      newer.history=[...hist.values()].sort((a,b)=>b.ts-a.ts).slice(0,20);
+      keep.deployed=newer;
+    }
+    console.log('[normalize] 归并',pr.id,'→',keep.id,'（'+String(keep.name).slice(0,24)+'）');
+  }
+  if(merged.length!==p.length){p.length=0;p.push(...merged)}
+  return merged.length;
+})}
 const ENV={...process.env,PATH:'/home/administrator/.hermes/node/bin:'+process.env.PATH};
 // ===== 并发池：run 全局单例已废除 =====
 const activeRuns=new Map(); // runDir -> runState
@@ -284,7 +308,8 @@ function restoreRun(dir){ // 从磁盘恢复一个 run 为 paused 态（bootStat
     const rs={dir,id:path.basename(dir),idea:st.idea||'(未知)',flow:st.flow||'build',repo,parentProject:null,stage:null,
       nodeStatus:ns,acceptDetails:(st.acceptDetails||[]).map((a,i)=>ns[i]==='blocked'&&!a?'⛔ 服务重启中断，可重试续跑':a),
       gate:!!st.gate,awaiting,
-      events:[],artifacts:listArtifacts(dir),done:false,executing:false,nodeStartTs:0,lastAction:null,projectId:null,resumed:true};
+      events:[],artifacts:listArtifacts(dir),done:false,executing:false,nodeStartTs:0,lastAction:null,
+      projectId:findProjectByRun(path.basename(dir)),resumed:true}; // v2.2.1：恢复时按 runId 反查挂回项目（旧版 null 导致重复立项）
     persist(rs);
     return rs;
   }catch(e){return null}
@@ -376,7 +401,9 @@ function runFrom(rs,idx,res){
       emit({type:'node_check',node:n.id,pass:a.pass,detail:a.detail,deliverable:n.deliverable});
       if(!a.pass){rs.executing=false;emit({type:'pipeline_blocked',node:n.id,text:`⛔ 节点「${n.name}」验收未过，流水线已停止 — 修正后可重试本节点`});if(res)res.end();return}
       if(a.pass&&!rs.projectId){ // 首个验收通过 → 登记项目索引（每 run 只登记一次）
-        try{
+        rs.projectId=findProjectByRun(rs.id); // v2.2.1 防重：run 已挂项目则复用，不再新建（P-005~P-010 重复根因）
+        if(rs.projectId)emit({type:'project',text:'🗂 复用既有项目 '+rs.projectId});
+        else try{
           if(rs.flow==='build'){newProject(rs.idea.slice(0,24),rs.dir).then(pr=>{rs.projectId=pr.id;attachRun(pr.id,rs.id,rs.idea.slice(0,24),rs.dir)})}
           else if(rs.flow==='iterate'&&rs.parentProject){attachRun(rs.parentProject,rs.id);rs.projectId=rs.parentProject}
           else if(rs.flow==='fix'){newProject('fix:'+rs.idea.slice(0,16),rs.repo||rs.dir).then(pr=>{rs.projectId=pr.id;attachRun(pr.id,rs.id)})}
@@ -654,14 +681,22 @@ http.createServer((req,res)=>{
     });
     return;
   }
-  if(req.method==='GET'&&u.pathname==='/api/analyses'){ // 分析台话题列表（立项池数据源：state=go 且未 spawn 的可选）
+  if(req.method==='GET'&&u.pathname==='/api/analyses'){ // 分析台话题列表（立项池数据源：state=go 且未 spawn 的可选；v1.1 兼容话题目录 analyses/<topic>/an-*）
     const list=[];
-    try{for(const id of fs.readdirSync(ANALYSES).filter(d=>d.startsWith('an-')).sort().reverse()){
-      const d=path.join(ANALYSES,id);const m=rf(d,'meta.json');if(!m)continue;
-      try{const meta=JSON.parse(m);
-        list.push({id,dir:d,idea:(meta.idea||'').slice(0,120),state:meta.state,round:meta.round,updated:meta.updated,spawnedRun:meta.spawnedRun||null})}
-      catch(e){}
-    }}catch(e){}
+    try{
+      const seen=[];
+      for(const e of fs.readdirSync(ANALYSES,{withFileTypes:true})){
+        if(!e.isDirectory())continue;
+        if(e.name.startsWith('an-'))seen.push([e.name,ANALYSES]);
+        else for(const s of fs.readdirSync(path.join(ANALYSES,e.name)).filter(d=>d.startsWith('an-')))seen.push([s,path.join(ANALYSES,e.name)]);
+      }
+      for(const[id,base]of seen.sort((a,b)=>b[0].localeCompare(a[0]))){
+        const d=path.join(base,id);const m=rf(d,'meta.json');if(!m)continue;
+        try{const meta=JSON.parse(m);
+          list.push({id,dir:d,idea:(meta.idea||'').slice(0,120),state:meta.state,round:meta.round,updated:meta.updated,spawnedRun:meta.spawnedRun||null,topic:meta.topic||null})}
+        catch(e){}
+      }
+    }catch(e){}
     return j(res,200,{analyses:list});
   }
   if(req.method==='POST'&&u.pathname==='/api/mission/from-plan'){ // 分析台话题立项三通：build(默认)/fix(带 repo)/iterate(带 projectId)；分析产物 = 工厂输入料（非工厂产物）
@@ -822,4 +857,4 @@ http.createServer((req,res)=>{
     return;
   }
   res.writeHead(404);res.end();
-}).listen(PORT,'0.0.0.0',()=>{bootState();console.log('factory v2.2 (concurrent+deploy) on',PORT,'max',MAX_CONCURRENT)});
+}).listen(PORT,'0.0.0.0',()=>{normalizeProjects().then(n=>console.log('[normalize] 归类自愈完成：',n,'个项目'));bootState();console.log('factory v2.2.1 (concurrent+deploy+normalize) on',PORT,'max',MAX_CONCURRENT)});

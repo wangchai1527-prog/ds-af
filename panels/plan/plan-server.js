@@ -1,5 +1,6 @@
-// Idea Plan 分析台 v1 —— 会话/轮次协议（单一真源=磁盘，逐轮只增不改）
+// Idea Plan 分析台 v1.1 —— 会话/轮次协议（单一真源=磁盘，逐轮只增不改）
 // 端口 8792 · 独立服务，零耦合工厂（GO 仅提交立项池，立项由工厂 from-plan 拉起并回写 spawnedRun）
+// v1.1：话题目录归属（analyses/<topic>/an-*，杜绝无归属漂移会话）+ 历史话题续接（parent 注入父成果，不从零立项）
 const http=require('http'),fs=require('fs'),path=require('path'),{spawn}=require('child_process');
 const PORT=process.env.PORT||8792;
 const ADIR=process.env.ANALYSES||'/root/.dsh/ds-af/analyses';
@@ -10,11 +11,25 @@ fs.mkdirSync(ADIR,{recursive:true});
 /* ---------- 磁盘基元 ---------- */
 const rf=(d,f)=>{try{return fs.readFileSync(path.join(d,f),'utf8')}catch(e){return null}};
 const log=(d,ev)=>{try{fs.appendFileSync(path.join(d,'events.jsonl'),JSON.stringify({ts:Date.now(),...ev})+'\n')}catch(e){}};
-function readMeta(id){const d=path.join(ADIR,id);const m=rf(d,'meta.json');return m?{dir:d,meta:JSON.parse(m)}:null}
+/* ---------- 话题目录基元（v1.1：会话挂 analyses/<topic>/an-*；根级 an-* = 历史未分组） ---------- */
+const NO_TOPIC='未分组';
+function topicDirs(){try{return fs.readdirSync(ADIR,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('an-')).map(e=>e.name)}catch(e){return[]}}
+function readMeta(id){ // 先根级（历史未分组）后各话题目录逐层找
+  if(!/^an-[\w-]+$/.test(id))return null;
+  for(const base of [ADIR,...topicDirs().map(t=>path.join(ADIR,t))]){
+    const d=path.join(base,id);const m=rf(d,'meta.json');if(m)return{dir:d,meta:JSON.parse(m)}}
+  return null}
 function writeMeta(d,meta){meta.updated=new Date().toISOString();fs.writeFileSync(path.join(d,'meta.json'),JSON.stringify(meta,null,1))}
-function listAnalyses(){try{return fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')).sort().reverse()
-  .map(id=>{const m=rf(path.join(ADIR,id),'meta.json');if(!m)return null;const j=JSON.parse(m);
-    return{id,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated,submitMode:j.submitMode||'build',spawnedRuns:Array.isArray(j.spawnedRuns)?j.spawnedRuns.length:0}}).filter(Boolean)}catch(e){return[]}}
+function listAnalyses(){
+  const out=[];
+  const push=(id,dir,topic)=>{const m=rf(dir,'meta.json');if(!m)return;let j;try{j=JSON.parse(m)}catch(e){return}
+    out.push({id,topic,idea:j.idea.slice(0,80),state:j.state,round:j.round,updated:j.updated,
+      submitMode:j.submitMode||'build',spawnedRuns:Array.isArray(j.spawnedRuns)?j.spawnedRuns.length:0,parent:j.parent||null})};
+  try{
+    for(const id of fs.readdirSync(ADIR).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,id),NO_TOPIC);
+    for(const t of topicDirs())for(const id of fs.readdirSync(path.join(ADIR,t)).filter(d=>d.startsWith('an-')))push(id,path.join(ADIR,t,id),t);
+  }catch(e){}
+  return out.sort((a,b)=>(b.updated||'').localeCompare(a.updated||''))}
 
 /* ---------- 历史防重复立项（近 10 条注入 prompt） ---------- */
 function historyBlock(curId){
@@ -44,12 +59,18 @@ function agentStream(prompt,cwd,onEvent,onDone){
 const briefOf=(n,inp)=>n==='Bash'?'$ '+(inp.command||'').slice(0,80):n==='WebSearch'?'🔍 '+(inp.query||'').slice(0,60):n==='WebFetch'?'🌐 '+(inp.url||'').slice(0,60):n==='Read'?'读取 '+inp.file_path:n==='Write'?'写出 '+inp.file_path:n;
 
 function roundPrompt(meta,round){
+  const parentBlock=meta.parent?`
+
+## 续接背景
+本会话续接自父话题 ${meta.parent}（materials/parent-BRIEF.md 与 materials/parent-rounds.md 是其已交付成果）。
+必须在父话题成果的基础上继续分析研究（如二次开发、升级方向），不得从零重复立项或重复父话题已完成的论证。`:'';
   return `你是 Idea Plan 分析 Agent，工作目录即本分析会话目录（磁盘是唯一真源，逐轮只增不改）。
 
 ## 任务（第 ${round} 轮）
 读 meta.json、rounds/ 下全部历史轮次（r*-in.json 是人的拍板输入，r*-out.md 是往轮分析）、
 活文档 IDEA.md / RESEARCH.md / BRIEF.md（不存在则本轮创建/更新）、materials/ 下人喂的料。
 然后写出 rounds/r${String(round).padStart(3,'0')}-out.md，并同步更新活文档。
+${parentBlock}
 
 ## 历史分析（近 10 条，防重复立项）
 ${historyBlock(meta.id)}
@@ -94,16 +115,39 @@ const srv=http.createServer(async(req,res)=>{
     return json(res,200,{meta:s.meta,rounds,docs,materials:mats,running:running.has(m[1])});
   }
   if(req.method==='POST'&&u==='/api/new'){
-    const{idea}=await body(req);
+    const{idea,topic,parent}=await body(req);
     if(!idea||idea.trim().length<5)return json(res,422,{error:'想法太短（≥5 字）'});
-    const id='an-'+Date.now();const d=path.join(ADIR,id);
+    // v1.1：归属必填 —— 须带 topic（选已有或新建话题目录），或带 parent 续接（继承父话题目录）
+    let p=null;
+    if(parent){p=readMeta(parent);if(!p)return json(res,422,{error:'父话题 '+parent+' 不存在，无法续接'})}
+    let topicName,baseDir;
+    if(p){topicName=p.meta.topic||NO_TOPIC;baseDir=path.dirname(p.dir)} // 续接：落父话题同目录
+    else{
+      const t=String(topic||'').trim();
+      if(!t)return json(res,422,{error:'新建会话须指定话题目录（topic：选已有或新建），不能无归属漂移'});
+      if(t===NO_TOPIC)return json(res,422,{error:'「未分组」是历史老会话的保留桶，不可作为新话题目录 — 请为会话起一个真实话题名'});
+      topicName=t.replace(/[\\/:*?"<>|]+/g,'-').replace(/\.\./g,'').trim().slice(0,40);
+      if(!topicName)return json(res,422,{error:'话题目录名非法'});
+      baseDir=path.join(ADIR,topicName);fs.mkdirSync(baseDir,{recursive:true});
+    }
+    const id='an-'+Date.now();const d=path.join(baseDir,id);
     fs.mkdirSync(path.join(d,'rounds'),{recursive:true});fs.mkdirSync(path.join(d,'materials'));
-    const meta={id,idea:idea.trim(),state:'open',round:1,created:new Date().toISOString(),updated:null,spawnedRun:null};
+    if(p){ // 续接：父话题成果注入 materials/（BRIEF 定稿 + 全部轮次结论），分析从成果接着走
+      const brief=rf(p.dir,'BRIEF.md');
+      if(brief)fs.writeFileSync(path.join(d,'materials','parent-BRIEF.md'),brief);
+      const outs=[];
+      try{for(const f of fs.readdirSync(path.join(p.dir,'rounds')).sort())
+        if(/r\d+-out\.md$/.test(f))outs.push('### '+f+'\n'+(rf(p.dir,path.join('rounds',f))||''))}catch(e){}
+      if(outs.length)fs.writeFileSync(path.join(d,'materials','parent-rounds.md'),outs.join('\n\n'));
+    }
+    const meta={id,topic:topicName,idea:idea.trim(),state:'open',round:1,created:new Date().toISOString(),updated:null,
+      spawnedRun:null,parent:p?p.meta.id:null};
     writeMeta(d,meta);
-    fs.writeFileSync(path.join(d,'rounds','r001-in.json'),JSON.stringify({type:'idea',text:idea.trim()},null,1));
-    log(d,{ev:'created',idea:idea.trim().slice(0,80)});
+    fs.writeFileSync(path.join(d,'rounds','r001-in.json'),JSON.stringify(p?
+      {type:'continue',parent:p.meta.id,text:idea.trim()}:{type:'idea',text:idea.trim()},null,1));
+    log(d,{ev:'created',topic:topicName,parent:p?p.meta.id:null,idea:idea.trim().slice(0,80)});
     runRound(id);
-    return json(res,200,{id});
+    return json(res,200,{id,topic:topicName});
   }
   if(req.method==='POST'&&(m=u.match(/^\/api\/analyses\/(an-[\w-]+)\/reply$/))){
     const p=await body(req);const s=readMeta(m[1]);
