@@ -58,13 +58,14 @@ test('判据4+9：侧栏按磁盘桶聚合默认折叠（展开记忆）· 同�
   const heads=(h.match(/tg-head/g)||[]).length;
   assert.equal(heads,1,'x/panel 与 x_panel 同磁盘桶 → 一个组头（不分裂）');
   assert.ok(h.includes('x_panel'),'组名歧义时显示磁盘桶名');
-  assert.ok(!h.includes('class="ses'),'默认折叠：组内条目不渲染');
-  await window.tgToggle('x_panel');await sleep(50); // 手动展开 → 记忆
+  assert.ok(h.includes('class="ses'),'v1.3.1 默认展开：组内条目直接渲染');
+  await window.tgToggle('x_panel');await sleep(50); // 手动折叠 → 记忆
   h=el('list').innerHTML;
-  assert.equal((h.match(/class="ses/g)||[]).length,2,'展开后两条会话可见');
-  assert.ok(JSON.parse(store['plan-tg-collapsed'])['x_panel']===false,'展开记忆写入 plan-tg-collapsed');
+  assert.ok(!h.includes('class="ses'),'折叠后组内条目不渲染');
+  assert.ok(JSON.parse(store['plan-tg-collapsed'])['x_panel']===true,'折叠记忆写入 plan-tg-collapsed');
   await window.setF('all');await sleep(50);
-  assert.ok(el('list').innerHTML.includes('class="ses'),'记忆展开在下次 loadList 保持');
+  assert.ok(!el('list').innerHTML.includes('class="ses'),'记忆折叠在下次 loadList 保持');
+  await window.tgToggle('x_panel');await sleep(50); // 再展开恢复
 });
 
 after(()=>{globalThis.fetch=origFetch;globalThis.setInterval=origSetInterval}); // 测试全部跑完才恢复真实实现

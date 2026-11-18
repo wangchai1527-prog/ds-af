@@ -28,7 +28,7 @@ const writeErr=p=>{ // 目录增/删安全校验（DIAGNOSIS §5.6：增/删收�
   if(p===ADIR||p.split(path.sep).some(s=>PROTECTED_SEGS.includes(s)))return '保护路径不可增/删：'+p;
   return null};
 const kidDirs=p=>{try{return fs.readdirSync(p,{withFileTypes:true})
-  .filter(e=>e.isDirectory()&&!e.name.startsWith('.')&&e.name!=='node_modules'&&e.name!=='.cache'&&!inBlack(path.join(p,e.name)))}catch(e){return[]}};
+  .filter(e=>e.isDirectory()&&!['.git','.cache','.config','node_modules'].includes(e.name)&&!inBlack(path.join(p,e.name)))}catch(e){return[]}}; // v1.3.1：隐藏目录可见（/root/.dsh 等工作目录要能选），仅排除版本库/缓存类
 const slugTopic=t=>String(t).replace(/[\\/:*?"<>|]+/g,'_').replace(/\.\./g,'').trim().slice(0,60);
 function topicDirs(){try{return fs.readdirSync(ADIR,{withFileTypes:true}).filter(e=>e.isDirectory()&&!e.name.startsWith('an-')).map(e=>e.name)}catch(e){return[]}}
 function readMeta(id){ // 先根级（历史待整理）后各话题目录逐层找

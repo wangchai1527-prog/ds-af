@@ -42,9 +42,12 @@ test('判据3：黑名单目录任何层不出现 · base=/etc 与 ../etc 均 40
   assert.equal((await api('GET','/api/dirs?base=/etc')).code,400,'黑名单 base 应 400');
   assert.equal((await api('GET','/api/dirs?base=/proc/self')).code,400,'黑名单子路径应 400');
   fs.mkdirSync(path.join(WROOT,'nm','node_modules','x'),{recursive:true});
-  fs.mkdirSync(path.join(WROOT,'nm','.hid'),{recursive:true});
+  fs.mkdirSync(path.join(WROOT,'nm','.git'),{recursive:true});
+  fs.mkdirSync(path.join(WROOT,'nm','.work'),{recursive:true});
   const nm=await api('GET','/api/dirs?base='+encodeURIComponent(path.join(WROOT,'nm')));
-  assert.deepEqual(nm.body.dirs.map(d=>d.name),[],'隐藏与 node_modules 目录应被过滤');
+  assert.ok(!nm.body.dirs.map(d=>d.name).includes('node_modules'),'node_modules 应被过滤');
+  assert.ok(!nm.body.dirs.map(d=>d.name).includes('.git'),'.git/.cache/.config 应被过滤');
+  assert.ok(nm.body.dirs.map(d=>d.name).includes('.work'),'v1.3.1 工作类隐藏目录（如 /root/.dsh）应可见');
 });
 
 test('判据9：撞桶不分裂 —— x/panel 与 x_panel 同磁盘桶（bucket 一致）、标签语义可区分',async()=>{

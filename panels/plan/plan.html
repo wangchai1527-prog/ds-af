@@ -275,14 +275,19 @@ async function renderTree(){ // 真递归：按 open 集合任意深度渲染（
       const isOpen=treeState.open.has(kabs);
       const tw=k.hasChildren?`<span class="tw" onclick="event.stopPropagation();twDir('${esc(kabs)}')">${isOpen?'▾':'▸'}</span>`:'<span class="tw"></span>';
       const ops=canWrite(kabs)?`<span class="dops"><span title="新建子目录（限 /root 子树）" onclick="event.stopPropagation();mkDir('${esc(kabs)}')">➕</span><span title="删除空目录（限 /root 子树）" onclick="event.stopPropagation();rmDir('${esc(kabs)}')">🗑</span></span>`:'';
-      h+=`<div class="tnode ${selDir===rel?'sel':''}" onclick="pickDir('${esc(kabs)}')">${tw}📁 ${esc(k.name)}${ops}</div>`;
+      h+=`<div class="tnode ${selDir===rel?'sel':''}" data-path="${esc(kabs)}" onclick="pickDir('${esc(kabs)}')">${tw}📁 ${esc(k.name)}${ops}</div>`;
       if(isOpen)h+=`<div style="margin-left:26px">${await render(kabs)}</div>`;
     }
     return h||'<div style="font-size:11.5px;color:var(--muted);padding:4px 24px">（无子目录）</div>';
   };
   $('tree').innerHTML=`<div class="tnode home">🖥 / 全局根（系统目录已屏蔽）</div>`+await render(DIRROOT);
 }
-window.pickDir=abs=>{selDir=abs.slice(1);$('selPath').textContent=abs;$('selPath').classList.add('on');renderTree()};
+window.pickDir=abs=>{selDir=abs.slice(1);$('selPath').textContent=abs;$('selPath').classList.add('on');
+  if(typeof document.querySelector==='function'&&typeof document.querySelectorAll==='function'){ // v1.3.1：选中只切高亮，不整树重渲（流畅）；无选择器环境回退整树重渲
+    document.querySelectorAll('#tree .tnode.sel').forEach(n=>n.classList.remove('sel'));
+    const sel='[data-path="'+abs.replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"]';
+    const n=document.querySelector('#tree .tnode'+sel);if(n)n.classList.add('sel');
+  }else renderTree();};
 window.twDir=async abs=>{ // 展开/折叠（懒加载该层子目录）
   if(treeState.open.has(abs)){treeState.open.delete(abs);renderTree();return}
   await fetchKids(abs);treeState.open.add(abs);renderTree();
@@ -332,14 +337,14 @@ async function loadList(){
   const keys=Object.keys(groups).sort((x,y)=>(x==='待整理')-(y==='待整理')||x.localeCompare(y));
   const gLabel=g=>{const f=new Set(groups[g].map(a=>String(a.topic||'').split('/')[0]).filter(Boolean));return f.size===1?[...f][0]:g};
   let collapsed={};try{collapsed=JSON.parse(localStorage.getItem('plan-tg-collapsed')||'{}')}catch(e){}
-  const isC=t=>collapsed[t]===undefined?true:!!collapsed[t]; // v1.3 默认折叠；手动展开记忆保留
+  const isC=t=>collapsed[t]===undefined?false:!!collapsed[t]; // v1.3.1 默认展开（人反馈「默认收敛看不到」）；手动折叠记忆保留
   window.tgToggle=t=>{collapsed[t]=!isC(t);try{localStorage.setItem('plan-tg-collapsed',JSON.stringify(collapsed))}catch(e){};loadList()};
   window.tgMenu=t=>{tgMenuKey=tgMenuKey===t?null:t;loadList()};
   window.tgNew=(t,preset)=>{tgMenuKey=null;openModal('new',null,preset)}; // 绑桶新建：preset=成员完整归属标签（slug 即落本桶）
   $('list').innerHTML=arr.length?keys.map(t=>{
     const bind=t==='待整理'?null:groups[t].map(a=>a.topic).find(Boolean); // 新建绑此桶用的完整标签（待整理不可绑，仍走选目录）
-    return `<div class="tg-head" onclick="tgToggle(${JSON.stringify(t)})" title="磁盘桶：${esc(t)}">${isC(t)?'▸':'▾'} ${t==='待整理'?'📥':'📁'} ${esc(t==='待整理'?t:gLabel(t))}<span class="cnt">（${groups[t].length}）</span><span class="dots" onclick="event.stopPropagation();tgMenu(${JSON.stringify(t)})">…</span></div>`
-    +(tgMenuKey===t?`<div class="tgmenu">${bind?`<div onclick="tgNew(${JSON.stringify(t)},${JSON.stringify(bind)})">🌱 新建会话（绑此目录）</div>`:`<div onclick="tgNew(${JSON.stringify(t)})">🌱 新建会话（选目录）</div>`}<div class="off">🗂 目录管理（预留）</div></div>`:'')
+    return `<div class="tg-head" onclick="tgToggle('${esc(t)}')" title="磁盘桶：${esc(t)}">${isC(t)?'▸':'▾'} ${t==='待整理'?'📥':'📁'} ${esc(t==='待整理'?t:gLabel(t))}<span class="cnt">（${groups[t].length}）</span><span class="dots" onclick="event.stopPropagation();tgMenu('${esc(t)}')">…</span></div>`
+    +(tgMenuKey===t?`<div class="tgmenu">${bind?`<div onclick="tgNew('${esc(t)}','${esc(bind)}')">🌱 新建会话（绑此目录）</div>`:`<div onclick="tgNew('${esc(t)}')">🌱 新建会话（选目录）</div>`}<div class="off">🗂 目录管理（预留）</div></div>`:'')
     +(isC(t)?'':groups[t].map(a=>`
     <div class="ses ${cur===a.id?'sel':''}" onclick="selSes('${a.id}')" title="归属：${esc(a.topic||'待整理')}">
       <div class="idea">${a.parent?'<span title="续接会话" style="color:var(--primary)">🔁 </span>':''}${esc(a.idea)}</div>
