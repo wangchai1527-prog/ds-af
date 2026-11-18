@@ -331,11 +331,11 @@ async function loadList(){
   const d=await(await fetch('/api/analyses')).json().catch(()=>({analyses:[]}));
   const all=d.analyses||[];
   const arr=all.filter(a=>filter==='all'||a.state===filter);
-  /* v1.3 按磁盘桶聚合（单一真源，防「同磁盘桶不同侧栏组」分裂）：组名=成员一级分类一致时取之、否则桶名；
-     默认折叠（plan-tg-collapsed 记忆优先）；条目悬停显示完整归属；组头 … 菜单 = 新建会话绑此目录 + 目录管理留位 */
+  /* v1.3.2 按磁盘桶聚合（单一真源）：组名=成员归属**完整路径**一致时取之（对齐 DSH Files——显示选择的底层目录，
+     非一级分类；悬停 title 显磁盘桶），多标签同桶时退显桶名防误导 */
   const groups={};for(const a of arr){const b=a.bucket||a.topic||'待整理';(groups[b]=groups[b]||[]).push(a)}
   const keys=Object.keys(groups).sort((x,y)=>(x==='待整理')-(y==='待整理')||x.localeCompare(y));
-  const gLabel=g=>{const f=new Set(groups[g].map(a=>String(a.topic||'').split('/')[0]).filter(Boolean));return f.size===1?[...f][0]:g};
+  const gLabel=g=>{const f=new Set(groups[g].map(a=>String(a.topic||'').trim()).filter(Boolean));return f.size===1?[...f][0]:g};
   let collapsed={};try{collapsed=JSON.parse(localStorage.getItem('plan-tg-collapsed')||'{}')}catch(e){}
   const isC=t=>collapsed[t]===undefined?false:!!collapsed[t]; // v1.3.1 默认展开（人反馈「默认收敛看不到」）；手动折叠记忆保留
   window.tgToggle=t=>{collapsed[t]=!isC(t);try{localStorage.setItem('plan-tg-collapsed',JSON.stringify(collapsed))}catch(e){};loadList()};

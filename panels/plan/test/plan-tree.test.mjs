@@ -66,6 +66,11 @@ test('判据4+9：侧栏按磁盘桶聚合默认折叠（展开记忆）· 同�
   await window.setF('all');await sleep(50);
   assert.ok(!el('list').innerHTML.includes('class="ses'),'记忆折叠在下次 loadList 保持');
   await window.tgToggle('x_panel');await sleep(50); // 再展开恢复
+  // v1.3.2：组名=成员归属完整路径（对齐 DSH Files——显示选择的底层目录，非一级分类）
+  analyses=[{id:'an-3',topic:'root/.dsh/ds-af/panels/plan',bucket:'root_.dsh_ds-af_panels_plan',idea:'唯一标签',state:'open',round:1,updated:'2026-11-18T03:00:00Z',submitMode:'build',spawnedRuns:0,parent:null}];
+  await window.setF('all');await sleep(50);
+  const h3=el('list').innerHTML;
+  assert.ok(h3.includes('root/.dsh/ds-af/panels/plan'),'组头应显完整底层路径（非一级目录 root）');
 });
 
 after(()=>{globalThis.fetch=origFetch;globalThis.setInterval=origSetInterval}); // 测试全部跑完才恢复真实实现
